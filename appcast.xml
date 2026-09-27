@@ -3,6 +3,23 @@
     <channel>
         <title>Pastel</title>
         <item>
+            <title>20260928</title>
+            <pubDate>Mon, 28 Sep 2026 07:01:56 +0800</pubDate>
+            <link>https://github.com/junchan0412/Pastel-for-macOS/releases/tag/Pastel20260928</link>
+            <sparkle:version>2026092801</sparkle:version>
+            <sparkle:shortVersionString>20260928</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="plain-text"><![CDATA[感谢你使用 Pastel！
+
+Pastel 20260928 更新内容：
+
+1. 左侧新增 Mac 端：在 iPhone、iPad、Vision 之外增加 Mac 搜索入口（参考 majd/ipatool 的 macSoftware 平台与 IPA-Tool-3.0 的 Mac 搜索），Mac App 显示 Mac 平台标记，已下载的 Mac App 可一键反查。
+2. 右侧新增购买按钮：版本列表与底部手动栏的“下载”旁新增“购买”按钮，可对指定 App 指定版本完成首次购买（仅申请许可，不下载 IPA）。已拥有许可时直接显示已购买，不重复购买；付费 App 不会触发购买。
+]]></description>
+            <enclosure url="https://github.com/junchan0412/Pastel-for-macOS/releases/download/Pastel20260928/Pastel-20260928-build-2026092801.dmg" length="55332675" type="application/octet-stream"/>
+        </item>
+        <item>
             <title>20260907</title>
             <pubDate>Mon, 07 Sep 2026 10:02:12 +0800</pubDate>
             <link>https://github.com/EEliberto/Pastel-macOS/releases/tag/Pastel20260907</link>
