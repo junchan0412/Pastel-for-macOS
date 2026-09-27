@@ -110,6 +110,14 @@ async function runCommand(command, args) {
 
         await app.login();
 
+        // 购买模式：仅为免费 App 申请一次许可（buyProduct），不下载任何文件。
+        // 供 UI 的“购买”按钮使用：对指定 App（可选指定版本）完成首次购买。
+        if (process.env.IPA_PURCHASE_ONLY) {
+            await app.purchaseOnly(requiredEnv('DOWNLOAD_APPID'), process.env.DOWNLOAD_VERSION_ID || '');
+            console.log(t('all_done'));
+            return;
+        }
+
         // 兜底模式：只登录并从 Apple 元数据取版本 ID 列表，不下载。
         if (process.env.IPA_LIST_VERSION_IDS) {
             const result = await app.listVersionIds(requiredEnv('DOWNLOAD_APPID'));

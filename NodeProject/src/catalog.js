@@ -36,11 +36,15 @@ function normalizeSearchPlatform(value) {
     const platform = asText(value).toLowerCase().replace(/[\s_-]+/g, '');
     if (platform === 'ipad' || platform === 'ipados' || platform === 'tablet') return 'ipad';
     if (platform === 'vision' || platform === 'visionpro' || platform === 'visionos' || platform === 'applevisionpro') return 'vision';
+    if (platform === 'mac' || platform === 'macos' || platform === 'macbook' || platform === 'osx'
+        || platform === 'desktop' || platform === 'desktopsoftware' || platform === 'macsoftware') return 'mac';
     return 'iphone';
 }
 
 function searchEntityForPlatform(platform) {
-    return platform === 'ipad' ? 'iPadSoftware' : 'software';
+    if (platform === 'ipad') return 'iPadSoftware';
+    if (platform === 'mac') return 'macSoftware';
+    return 'software';
 }
 
 function appPlatformFromItem(item, fallback = '') {
@@ -54,6 +58,11 @@ function appPlatformFromItem(item, fallback = '') {
         item?.trackViewUrl,
     ].map(value => asText(value).toLowerCase());
     if (searchable.some(value => value.includes('vision') || value.includes('reality'))) return 'vision';
+    // 展示用平台标记只认决定性信号（kind=mac-software、Mac 商店链接 mt=12）或 mac 搜索回退：
+    // 通用 App 的 supportedDevices 里常带 MacDesktop，不能因此就把 iPhone 搜索结果标成 mac。
+    // 搜索过滤仍用宽松的 isMacCompatibleItem，保证 Mac 搜索的召回。
+    if (normalizedFallback === 'mac') return 'mac';
+    if (searchable.some(value => value.includes('mac-software') || value.includes('mt=12'))) return 'mac';
     if (normalizedFallback === 'ipad') return 'ipad';
     return 'iphone';
 }
@@ -68,6 +77,18 @@ function isVisionCompatibleItem(item) {
     ].map(value => asText(value).toLowerCase());
 
     return searchable.some(value => value.includes('vision') || value.includes('reality'));
+}
+
+function isMacCompatibleItem(item) {
+    const supportedDevices = Array.isArray(item?.supportedDevices) ? item.supportedDevices : [];
+    const searchable = [
+        ...supportedDevices,
+        ...(Array.isArray(item?.features) ? item.features : []),
+        item?.kind,
+        item?.trackViewUrl,
+    ].map(value => asText(value).toLowerCase());
+
+    return searchable.some(value => value.includes('mac-software') || value.includes('mt=12') || value.includes('macdesktop'));
 }
 
 function normalizeApp(item, source = 'apple', platform = '') {
@@ -88,7 +109,7 @@ function normalizeApp(item, source = 'apple', platform = '') {
     };
 }
 
-function normalizeRSSApp(item, source = 'apple-rss') {
+function normalizeRSSApp(item, source = 'apple-rss', platform = '') {
     return {
         id: asText(item.id),
         name: asText(item.name),
@@ -102,11 +123,11 @@ function normalizeRSSApp(item, source = 'apple-rss') {
         trackViewUrl: asText(item.url),
         currentVersionReleaseDate: asText(item.releaseDate),
         source,
-        platform: normalizeSearchPlatform(source),
+        platform: platform || normalizeSearchPlatform(source),
     };
 }
 
-function normalizeLegacyRSSApp(item, source = 'apple-rss') {
+function normalizeLegacyRSSApp(item, source = 'apple-rss', platform = '') {
     const images = Array.isArray(item?.['im:image']) ? item['im:image'] : [];
     const largestImage = images[images.length - 1] || {};
     const id = asText(item?.id?.attributes?.['im:id']);
@@ -125,7 +146,7 @@ function normalizeLegacyRSSApp(item, source = 'apple-rss') {
         trackViewUrl: link,
         currentVersionReleaseDate: asText(item?.['im:releaseDate']?.label),
         source,
-        platform: normalizeSearchPlatform(source),
+        platform: platform || normalizeSearchPlatform(source),
     };
 }
 
@@ -181,6 +202,10 @@ async function lookupAppsByIds(ids, {country = 'cn', platform = 'iphone'} = {}) 
     if (cleanPlatform === 'vision') {
         const visionResults = rawResults.filter(isVisionCompatibleItem);
         if (visionResults.length) rawResults = visionResults;
+    }
+    if (cleanPlatform === 'mac') {
+        const macResults = rawResults.filter(isMacCompatibleItem);
+        if (macResults.length) rawResults = macResults;
     }
     const apps = rawResults.map(item => normalizeApp(item, 'apple', cleanPlatform));
     const byId = new Map(apps.map(app => [app.id, app]));
@@ -269,6 +294,12 @@ async function lookupApp(appId, {country = 'cn', platform = 'iphone'} = {}) {
         const visionResults = rawResults.filter(isVisionCompatibleItem);
         if (visionResults.length) rawResults = visionResults;
     }
+    if (cleanPlatform === 'mac') {
+        const macResults = rawResults.filter(isMacCompatibleItem);
+        // Mac App 的 lookup 必须精确命中：混合结果里的 iOS 同名 App 不能算数。
+        // 无精确结果时宁可返回空（调用方决定回退），不返回错平台数据。
+        rawResults = macResults;
+    }
     const results = rawResults.map(item => normalizeApp(item, 'apple', cleanPlatform));
     return {
         queryType: 'lookup',
@@ -301,7 +332,7 @@ async function searchApps(term, {country = 'cn', platform = 'iphone', limit = 30
             term,
             country,
             entity: searchEntityForPlatform(cleanPlatform),
-            limit: cleanPlatform === 'vision' ? Math.min(cleanLimit * 4, 200) : cleanLimit,
+            limit: cleanPlatform === 'vision' || cleanPlatform === 'mac' ? Math.min(cleanLimit * 4, 200) : cleanLimit,
         },
     });
 
@@ -309,6 +340,10 @@ async function searchApps(term, {country = 'cn', platform = 'iphone', limit = 30
     if (cleanPlatform === 'vision') {
         const visionResults = rawResults.filter(isVisionCompatibleItem);
         if (visionResults.length) rawResults = visionResults;
+    }
+    if (cleanPlatform === 'mac') {
+        const macResults = rawResults.filter(isMacCompatibleItem);
+        if (macResults.length) rawResults = macResults;
     }
     const results = rawResults.slice(0, cleanLimit).map(item => normalizeApp(item, 'apple', cleanPlatform));
     return {
@@ -322,7 +357,9 @@ async function fetchRankedRSSApps(country, platform = 'iphone') {
     const cleanPlatform = normalizeSearchPlatform(platform);
     const feedNames = cleanPlatform === 'ipad'
         ? ['topfreeipadapplications', 'toppaidipadapplications']
-        : ['topfreeapplications', 'toppaidapplications'];
+        : cleanPlatform === 'mac'
+            ? ['topfreemacapps', 'toppaidmacapps']
+            : ['topfreeapplications', 'toppaidapplications'];
     const feeds = feedNames.map(name => ({
         url: `https://itunes.apple.com/${country}/rss/${name}/limit=100/json`,
         legacy: true,
@@ -340,7 +377,7 @@ async function fetchRankedRSSApps(country, platform = 'iphone') {
             ? (Array.isArray(data?.feed?.entry) ? data.feed.entry : [])
             : (Array.isArray(data?.feed?.results) ? data.feed.results : []);
         for (const item of results) {
-            const app = response.value.legacy ? normalizeLegacyRSSApp(item) : normalizeRSSApp(item);
+            const app = response.value.legacy ? normalizeLegacyRSSApp(item, 'apple-rss', cleanPlatform) : normalizeRSSApp(item, 'apple-rss', cleanPlatform);
             if (!app.id || seen.has(app.id)) continue;
             seen.add(app.id);
             apps.push(app);
@@ -358,7 +395,7 @@ async function fetchRankedRSSApps(country, platform = 'iphone') {
         if (response.status !== 'fulfilled') continue;
         const results = Array.isArray(response.value.data?.feed?.results) ? response.value.data.feed.results : [];
         for (const item of results) {
-            const app = normalizeRSSApp(item);
+            const app = normalizeRSSApp(item, 'apple-rss', cleanPlatform);
             if (!app.id || seen.has(app.id)) continue;
             seen.add(app.id);
             apps.push(app);

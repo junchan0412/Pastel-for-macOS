@@ -161,11 +161,16 @@ struct VersionSelectionRow: View {
     static let noUpdatesSwitchApproxWidth: CGFloat = 48
     static let noUpdatesHeaderDividerGap: CGFloat = 8
     static let actionGap: CGFloat = 12
-    static var actionColumnWidth: CGFloat {
-        usesWideDownloadButton ? 112 : 96
-    }
     static var downloadButtonWidth: CGFloat {
         usesWideDownloadButton ? 82 : 58
+    }
+    // “下载 + 购买”双按钮：动作列按两按钮宽 + 间距预留（中文 58+6+58=122，英文/日文 82+6+82=170）。
+    static var purchaseButtonWidth: CGFloat {
+        usesWideDownloadButton ? 82 : 58
+    }
+    static let purchaseButtonGap: CGFloat = 6
+    static var actionColumnWidth: CGFloat {
+        downloadButtonWidth + purchaseButtonGap + purchaseButtonWidth
     }
     static let rowHorizontalPadding: CGFloat = 16
 
@@ -231,6 +236,11 @@ struct VersionSelectionRow: View {
     let onSelect: () -> Void
     let onToggleNoUpdate: (Bool) -> Void
     let onDownload: () -> Void
+    let onPurchase: () -> Void
+    let isPurchasing: Bool
+    let hasPurchaseError: Bool
+    let purchaseErrorLog: String
+    let purchaseSucceeded: Bool
     let onSignIn: () -> Void
     let onReveal: () -> Void
     let onAirDrop: () -> Void
@@ -345,31 +355,74 @@ struct VersionSelectionRow: View {
                 .glassEffectID("version-row-action", in: actionGlassNamespace)
                 .glassEffectTransition(.matchedGeometry)
         case .ready:
+            HStack(spacing: VersionSelectionRow.purchaseButtonGap) {
+                Button {
+                    onDownload()
+                } label: {
+                    Text(String(localized: "下载"))
+                        .font(.caption.weight(.semibold))
+                        .frame(width: VersionSelectionRow.downloadButtonWidth, height: 26)
+                        .background {
+                            if isSelected {
+                                Capsule()
+                                    .fill(Color.white.opacity(0.56))
+                            }
+                        }
+                        .overlay {
+                            if isSelected {
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.48), lineWidth: 1)
+                            }
+                        }
+                }
+                .buttonStyle(StablePressButtonStyle())
+                .foregroundStyle(Color.accentColor)
+                .glassEffect(.regular.tint(isSelected ? Color.white.opacity(0.34) : nil).interactive(), in: Capsule())
+
+                purchaseButton
+            }
+            .glassEffectID("version-row-action", in: actionGlassNamespace)
+            .glassEffectTransition(.matchedGeometry)
+        }
+    }
+
+    // “购买”按钮：仅为免费 App 申请一次许可（buyProduct），不下载文件。
+    // 已购买（downloaded）、进行中（running/error）时不展示购买入口。
+    @ViewBuilder
+    private var purchaseButton: some View {
+        if purchaseSucceeded {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
+                .help(String(localized: "已购买"))
+        } else if isPurchasing {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
+        } else if hasPurchaseError {
+            DownloadErrorIndicator(
+                message: purchaseErrorMessage,
+                requiresSignIn: downloadRequiresRelogin(from: purchaseErrorLog),
+                retry: onPurchase,
+                signIn: onSignIn
+            )
+        } else {
             Button {
-                onDownload()
+                onPurchase()
             } label: {
-                Text(String(localized: "下载"))
+                Text(String(localized: "购买"))
                     .font(.caption.weight(.semibold))
-                    .frame(width: VersionSelectionRow.downloadButtonWidth, height: 26)
-                    .background {
-                        if isSelected {
-                            Capsule()
-                                .fill(Color.white.opacity(0.56))
-                        }
-                    }
-                    .overlay {
-                        if isSelected {
-                            Capsule()
-                                .stroke(Color.white.opacity(0.48), lineWidth: 1)
-                        }
-                    }
+                    .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
             }
             .buttonStyle(StablePressButtonStyle())
             .foregroundStyle(Color.accentColor)
             .glassEffect(.regular.tint(isSelected ? Color.white.opacity(0.34) : nil).interactive(), in: Capsule())
-            .glassEffectID("version-row-action", in: actionGlassNamespace)
-            .glassEffectTransition(.matchedGeometry)
         }
+    }
+
+    private var purchaseErrorMessage: String {
+        downloadErrorMessage(from: purchaseErrorLog)
     }
 
     private enum ActionState: Hashable {
