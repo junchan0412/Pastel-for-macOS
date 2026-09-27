@@ -5,6 +5,10 @@ import path from 'path';
 import {Store} from './client.js';
 import {appPriceInfo, storefrontCurrentVersion} from './catalog.js';
 
+function printJSON(value) {
+    process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
 function versionIdentifiersFromSong(song) {
     const metadata = song?.metadata || {};
     const candidates = [
@@ -322,6 +326,50 @@ export class Ipa {
             Store.cleanup?.();
             console.log(t('cleanup_done'));
         }
+    }
+
+    // 仅购买（不下载）：对免费 App 申请一次许可（buyProduct），供“首次购买”按钮使用。
+    // 先查已有许可：已拥有则直接返回 existing，绝不重复调用 buyProduct
+    //（该端点在已有有效许可时可能返回无关的 5002 错误）。
+    // 付费 App 一律拒绝购买；未传版本 ID 时仅创建当前版本的账户许可。
+    async purchaseOnly(APPID, appVerId = '') {
+        if (!this.user) throw new Error('Please login() first');
+        return await this._withReauth(() => this._purchaseOnce(APPID, appVerId));
+    }
+
+    async _purchaseOnce(APPID, appVerId = '') {
+        const appId = String(APPID || '').trim();
+        const versionId = String(appVerId || '').trim();
+        if (!appId) throw new Error(t('missing_appid'));
+
+        // 已拥有该 App（任意版本可查）→ 直接返回，不触碰 buyProduct。
+        const owned = await Store.AppInfo(appId, versionId || '', this.auth).catch(error => ({_error: error}));
+        if (!owned?._error) {
+            printJSON({ok: true, state: 'existing', appId, versionId});
+            return owned;
+        }
+        const ownedError = owned._error;
+        const noLicense = ownedError.code === 'LICENSE_NOT_FOUND'
+            || ownedError.code === 'APPINFO_EMPTY'
+            || /License not found|Redownload Unavailable with This Apple Account/i.test(ownedError.message || '');
+        if (!noLicense) throw ownedError;
+
+        // 免费 App 才允许申请许可；付费一律拒绝（与 downloadInfo 同一红线）。
+        if (!(await this.isFreeApp(appId))) {
+            throw new Error(t('paid_not_purchased'));
+        }
+
+        // 参考 IPA-Tool-3.0 的 StoreService.purchaseApp：许可只按当前版本创建，
+        // 历史 versionId 不传给 buyProduct（传了也建不出历史版本的许可）。
+        const purchaseResponse = await Store.purchase(appId, '', this.auth);
+        const state = purchaseResponse?._state === 'success'
+            && /资料库|library|already|owned/i.test(purchaseResponse?.customerMessage || '')
+            ? 'existing'
+            : 'new';
+        await this.persistCurrentSession().catch(() => {});
+        printJSON({ok: true, state, appId, versionId});
+        console.log(t('purchase_ok', {message: purchaseResponse?.customerMessage || t('lic_success')}));
+        return purchaseResponse;
     }
 
     // Download sources only provide version IDs. The Apple account license is a

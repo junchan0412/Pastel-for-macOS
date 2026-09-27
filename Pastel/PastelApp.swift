@@ -795,6 +795,7 @@ struct RunConfig {
     var appCountry: String = "us"
     var allowAppAcquisition: Bool = false
     var removeAppStoreUpdateMetadata: Bool = false
+    var purchaseOnly: Bool = false
 }
 
 private struct NodeCredentialPayload: Encodable, Sendable {
@@ -1460,6 +1461,7 @@ final class DownloadManager {
         env["DOWNLOAD_VERSION_ID"] = config.versionID
         env["DOWNLOAD_DIR"] = config.downloadDir
         if config.listVersionIDs { env["IPA_LIST_VERSION_IDS"] = "1" }
+        if config.purchaseOnly { env["IPA_PURCHASE_ONLY"] = "1" }
         if config.validateLogin { env["IPA_VALIDATE_LOGIN"] = "1" }
         if config.allowAppAcquisition { env["IPA_ALLOW_APP_ACQUIRE"] = "1" }
         env["IPA_DEVICE_GUID"] = deviceGUID
@@ -1641,6 +1643,11 @@ struct AppSearchResult: Decodable, Identifiable, Hashable {
             || artworkUrl.lowercased().contains(".lsr/")
             || trackViewUrl.lowercased().contains("/vision")
     }
+
+    var isMacApp: Bool {
+        let normalizedPlatform = (platform ?? "").lowercased()
+        return normalizedPlatform.contains("mac")
+    }
 }
 
 struct SearchResponse: Decodable {
@@ -1705,6 +1712,10 @@ struct DownloadedItem: Identifiable, Hashable, Sendable {
         softwarePlatform.lowercased().contains("vision")
             || artworkUrl.lowercased().contains(".lsr/")
     }
+
+    var isMacApp: Bool {
+        softwarePlatform.lowercased().contains("mac")
+    }
 }
 
 struct DownloadedAppGroup: Identifiable {
@@ -1719,11 +1730,13 @@ struct DownloadedAppGroup: Identifiable {
     var artworkUrl: String { items.first?.artworkUrl ?? "" }
     var softwarePlatform: String { items.first?.softwarePlatform ?? "" }
     var isVisionApp: Bool { items.first?.isVisionApp ?? false }
+    var isMacApp: Bool { items.first?.isMacApp ?? false }
 }
 
 private enum AppSearchPlatform: String, CaseIterable, Identifiable {
     case iphone
     case ipad
+    case mac
     case vision
 
     var id: String { rawValue }
@@ -1732,6 +1745,7 @@ private enum AppSearchPlatform: String, CaseIterable, Identifiable {
         switch self {
         case .iphone: return "iphone"
         case .ipad: return "ipad"
+        case .mac: return "macbook"
         case .vision: return "vision.pro"
         }
     }
@@ -1740,6 +1754,7 @@ private enum AppSearchPlatform: String, CaseIterable, Identifiable {
         switch self {
         case .iphone: return "iPhone"
         case .ipad: return "iPad"
+        case .mac: return "Mac"
         case .vision: return "Vision"
         }
     }
@@ -3040,6 +3055,13 @@ struct ContentView: View {
                                             onDownload: {
                                                 downloadVersion(record)
                                             },
+                                            onPurchase: {
+                                                purchaseVersion(record)
+                                            },
+                                            isPurchasing: isPurchasingVersion(record),
+                                            hasPurchaseError: purchaseJobFor(record)?.status == .failed,
+                                            purchaseErrorLog: purchaseJobFor(record)?.log ?? "",
+                                            purchaseSucceeded: purchaseSucceededFor(record),
                                             onSignIn: showRelogin,
                                             onReveal: {
                                                 if let url = downloadedFileFor(record, removesAppStoreUpdates: noUpdateEnabled(for: record)) { revealInFinder(url) }
@@ -3238,20 +3260,54 @@ struct ContentView: View {
             .glassEffectID("manual-download-action", in: manualActionGlassNamespace)
             .glassEffectTransition(.matchedGeometry)
         case .ready:
-            Button {
-                downloadManualVersionID()
-            } label: {
-                Text(String(localized: "下载"))
-                    .font(.caption.weight(.semibold))
-                    .frame(width: VersionSelectionRow.downloadButtonWidth, height: 26)
-                    .contentShape(Capsule())
+            HStack(spacing: 6) {
+                Button {
+                    downloadManualVersionID()
+                } label: {
+                    Text(String(localized: "下载"))
+                        .font(.caption.weight(.semibold))
+                        .frame(width: VersionSelectionRow.downloadButtonWidth, height: 26)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(StablePressButtonStyle())
+                .foregroundStyle(canDownloadManualVersion ? Color.accentColor : Color.secondary)
+                .glassEffect(.regular.interactive(), in: Capsule())
+                .disabled(!canDownloadManualVersion)
+
+                if manualPurchaseSucceeded {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
+                        .help(String(localized: "已购买"))
+                } else if isManualPurchasing {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
+                } else if manualPurchaseJob()?.status == .failed {
+                    DownloadErrorIndicator(
+                        message: downloadErrorMessage(from: manualPurchaseJob()?.log ?? ""),
+                        requiresSignIn: downloadRequiresRelogin(from: manualPurchaseJob()?.log ?? ""),
+                        retry: purchaseManualVersionID,
+                        signIn: showRelogin
+                    )
+                } else {
+                    Button {
+                        purchaseManualVersionID()
+                    } label: {
+                        Text(String(localized: "购买"))
+                            .font(.caption.weight(.semibold))
+                            .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(StablePressButtonStyle())
+                    .foregroundStyle(canDownloadManualVersion ? Color.accentColor : Color.secondary)
+                    .glassEffect(.regular.interactive(), in: Capsule())
+                    .disabled(!canDownloadManualVersion)
+                }
             }
-            .buttonStyle(StablePressButtonStyle())
-            .foregroundStyle(canDownloadManualVersion ? Color.accentColor : Color.secondary)
-            .glassEffect(.regular.interactive(), in: Capsule())
             .glassEffectID("manual-download-action", in: manualActionGlassNamespace)
             .glassEffectTransition(.matchedGeometry)
-            .disabled(!canDownloadManualVersion)
         }
     }
 
@@ -3604,6 +3660,13 @@ struct ContentView: View {
                                     onDownload: {
                                         downloadVersion(record)
                                     },
+                                    onPurchase: {
+                                        purchaseVersion(record)
+                                    },
+                                    isPurchasing: isPurchasingVersion(record),
+                                    hasPurchaseError: purchaseJobFor(record)?.status == .failed,
+                                    purchaseErrorLog: purchaseJobFor(record)?.log ?? "",
+                                    purchaseSucceeded: purchaseSucceededFor(record),
                                     onSignIn: showRelogin,
                                     onReveal: {
                                         if let url = downloadedFileFor(record, removesAppStoreUpdates: noUpdateEnabled(for: record)) { revealInFinder(url) }
@@ -4519,6 +4582,12 @@ struct ContentView: View {
                         width: columns.noUpdates + VersionSelectionRow.actionGap + VersionSelectionRow.actionColumnWidth,
                         alignment: .leading
                     )
+                    .overlay(alignment: .trailing) {
+                        Text(String(localized: "操作"))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
+                            .frame(width: VersionSelectionRow.actionColumnWidth, alignment: .center)
+                    }
                 }
                 .padding(.horizontal, VersionSelectionRow.rowHorizontalPadding)
                 .frame(width: proxy.size.width, height: 30, alignment: .leading)
@@ -4804,6 +4873,9 @@ struct ContentView: View {
             selectedSearchPlatformID = AppSearchPlatform.vision.rawValue
             catalog.platform = AppSearchPlatform.vision.rawValue
             catalog.historyProvider = "apple"
+        } else if group.isMacApp {
+            selectedSearchPlatformID = AppSearchPlatform.mac.rawValue
+            catalog.platform = AppSearchPlatform.mac.rawValue
         }
         if let code = storefrontCountryCode(group.storefrontId) {
             selectedCountryCode = code
@@ -4841,6 +4913,9 @@ struct ContentView: View {
             selectedSearchPlatformID = AppSearchPlatform.vision.rawValue
             catalog.platform = AppSearchPlatform.vision.rawValue
             catalog.historyProvider = "apple"
+        } else if result.isMacApp {
+            selectedSearchPlatformID = AppSearchPlatform.mac.rawValue
+            catalog.platform = AppSearchPlatform.mac.rawValue
         }
         loadHistoryForActiveApp()
     }
@@ -5198,6 +5273,120 @@ struct ContentView: View {
         if price.isEmpty { return "" }
         let digits = price.compactMap(\.wholeNumberValue)
         return digits.isEmpty || digits.allSatisfy { $0 == 0 } ? "1" : "0"
+    }
+
+    // MARK: - 购买（首次购买，不下载）
+
+    // 购买 job 以 "purchase-" 为前缀，与下载 job 命名空间隔离。
+    private func purchaseJobID(appID: String, versionID: String) -> String {
+        let versionKey = versionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "latest" : versionID
+        return "purchase-\(appID)-\(versionKey)"
+    }
+
+    private func purchaseJobID(for record: VersionRecord) -> String {
+        purchaseJobID(appID: activeAppID, versionID: record.versionId)
+    }
+
+    private func purchaseJobFor(_ record: VersionRecord) -> DownloadManager.Job? {
+        downloads.job(purchaseJobID(for: record))
+    }
+
+    private func isPurchasingVersion(_ record: VersionRecord) -> Bool {
+        downloads.isRunning(purchaseJobID(for: record))
+    }
+
+    private func purchaseSucceededFor(_ record: VersionRecord) -> Bool {
+        purchaseJobFor(record)?.status == .done
+    }
+
+    // 指定 App 指定版本的首次购买：只申请许可（buyProduct），不下载 IPA。
+    // 付费 App 由 Node 侧拒绝（paid_not_purchased），此处只负责发起与账号校验。
+    private func purchaseVersion(_ record: VersionRecord) {
+        guard let account = accountStore.selectedAccount else {
+            accountFeature.saveMessage = String(localized: "请先登录 Apple 账户。")
+            showSettings()
+            return
+        }
+        let cleanAppleAccount = account.appleAccount.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanPassword: String
+        do {
+            cleanPassword = try accountStore.password(for: account)
+        } catch {
+            accountFeature.saveMessage = error.localizedDescription
+            return
+        }
+        let appID = activeAppID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanAppleAccount.isEmpty, !cleanPassword.isEmpty else {
+            accountFeature.saveMessage = String(localized: "请先登录 Apple 账户。")
+            showSettings()
+            return
+        }
+        guard !appID.isEmpty else { return }
+        let accountCountry = account.countryCode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let priceFlag = accountCountry.caseInsensitiveCompare(selectedCountryCode) == .orderedSame ? appIsFreeFlag() : ""
+        let config = RunConfig(
+            appleAccount: cleanAppleAccount,
+            password: cleanPassword,
+            code: "",
+            appID: appID,
+            versionID: record.versionId,
+            downloadDir: downloadDir,
+            appIsFree: priceFlag,
+            appCountry: accountCountry.isEmpty ? selectedCountryCode : accountCountry,
+            purchaseOnly: true
+        )
+        let jobID = purchaseJobID(for: record)
+        let labelVersion = record.version.isEmpty ? record.versionId : record.version
+        downloads.start(id: jobID, label: "\(activeAppName) \(labelVersion)", config: config)
+    }
+
+    // 手动购买：底部手动栏 App ID（+ 可选版本 ID）的首次购买，不下载。
+    private func purchaseManualVersionID() {
+        let appID = manualAppIDTrimmed
+        let vid = manualVersionIDTrimmed
+        guard !appID.isEmpty else { return }
+        guard let account = accountStore.selectedAccount else {
+            accountFeature.saveMessage = String(localized: "请先登录 Apple 账户。")
+            showSettings()
+            return
+        }
+        let cleanPassword: String
+        do {
+            cleanPassword = try accountStore.password(for: account)
+        } catch {
+            accountFeature.saveMessage = error.localizedDescription
+            return
+        }
+        let accountCountry = account.countryCode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let priceFlag = accountCountry.caseInsensitiveCompare(selectedCountryCode) == .orderedSame ? appIsFreeFlag() : ""
+        let config = RunConfig(
+            appleAccount: account.appleAccount.trimmingCharacters(in: .whitespacesAndNewlines),
+            password: cleanPassword,
+            code: "",
+            appID: appID,
+            versionID: vid,
+            downloadDir: downloadDir,
+            appIsFree: priceFlag,
+            appCountry: accountCountry.isEmpty ? selectedCountryCode : accountCountry,
+            purchaseOnly: true
+        )
+        downloads.start(
+            id: purchaseJobID(appID: appID, versionID: vid),
+            label: "App ID \(appID)\(vid.isEmpty ? "" : " \(vid)")",
+            config: config
+        )
+    }
+
+    private func manualPurchaseJob() -> DownloadManager.Job? {
+        downloads.job(purchaseJobID(appID: manualAppIDTrimmed, versionID: manualVersionIDTrimmed))
+    }
+
+    private var manualPurchaseSucceeded: Bool {
+        manualPurchaseJob()?.status == .done
+    }
+
+    private var isManualPurchasing: Bool {
+        downloads.isRunning(purchaseJobID(appID: manualAppIDTrimmed, versionID: manualVersionIDTrimmed))
     }
 
     private func downloadManualVersionID() {
@@ -5650,6 +5839,9 @@ struct ContentView: View {
             selectedSearchPlatformID = AppSearchPlatform.vision.rawValue
             catalog.platform = AppSearchPlatform.vision.rawValue
             catalog.historyProvider = "apple"
+        } else if item.isMacApp {
+            selectedSearchPlatformID = AppSearchPlatform.mac.rawValue
+            catalog.platform = AppSearchPlatform.mac.rawValue
         }
         loadHistoryForActiveApp()
     }
@@ -5672,6 +5864,9 @@ struct ContentView: View {
             selectedSearchPlatformID = AppSearchPlatform.vision.rawValue
             catalog.platform = AppSearchPlatform.vision.rawValue
             catalog.historyProvider = "apple"
+        } else if group.isMacApp {
+            selectedSearchPlatformID = AppSearchPlatform.mac.rawValue
+            catalog.platform = AppSearchPlatform.mac.rawValue
         }
         loadHistoryForActiveApp()
     }
