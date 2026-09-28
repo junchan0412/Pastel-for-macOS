@@ -87,6 +87,15 @@ const _endpoints = {
     Redownload: {
         url: (guid) => `https://downloaddispatch.itunes.apple.com/r/redownload?guid=${guid}`,
     },
+    // bag.xml urlBag.updateProduct：ipatool 只在**固定了历史版本**且 redownload 返回
+    // 空 / “No longer available” 时调用它（appExtVrsId），这是取回指定历史版本的关键兜底。
+    Update: {
+        url: (guid) => `https://downloaddispatch.itunes.apple.com/up/updateProduct?guid=${guid}`,
+    },
+    // bag.xml urlBag.backgroundUpdateProduct：IPA-Tool-3.0 在 songList 仍为空时的最后兜底。
+    BackgroundUpdate: {
+        url: (guid) => `https://downloaddispatch.itunes.apple.com/up/backgroundUpdateProduct?guid=${guid}`,
+    },
     purchase: {
         url: (pod) => `https://${podPrefix(pod)}buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/buyProduct`,
         buildBody: ({appid, appVerId, guid, pricingParameters = 'STDQ'}) => ({
@@ -105,6 +114,32 @@ const _endpoints = {
         }),
     },
 };
+
+// 判断某端点没有给出可用下载信息：Apple 对部分第三方 App 返回 5002，
+// 近期也会返回 status=0 + 空 songList —— 这两种都要换端点重试。
+function needsDownloadFallback(parsedResp) {
+    return String(parsedResp.failureType || '') === '5002' || !parsedResp.songList?.[0];
+}
+
+// 取下载信息的端点链（对齐两份参考实现，顺序与触发条件固定如下）：
+//   volumeStore → redownload → (仅固定版本) updateProduct → backgroundUpdate
+//   - volumeStore：ipatool 首选；固定版本时键为 externalVersionId
+//   - redownload：ipatool / Asspp 对 5002 的兼容路径（键 appExtVrsId）
+//   - updateProduct：ipatool **只在固定了历史版本**时调用，用于取回指定历史版本
+//   - backgroundUpdate：IPA-Tool-3.0 在 songList 仍为空时的最后兜底
+export function downloadInfoCandidates({appIdentifier, appVerId = '', guid = '', pod = ''} = {}) {
+    const endpoint = _endpoints.AppInfo;
+    const body = {appIdentifier, appVerId, guid};
+    const appExtBody = endpoint.buildBody({...body, redownload: true});
+    return [
+        {name: 'volumeStore', url: endpoint.url(guid, pod), body: endpoint.buildBody(body)},
+        {name: 'redownload', url: _endpoints.Redownload.url(guid), body: appExtBody},
+        ...(appVerId
+            ? [{name: 'updateProduct', url: _endpoints.Update.url(guid), body: appExtBody}]
+            : []),
+        {name: 'backgroundUpdate', url: _endpoints.BackgroundUpdate.url(guid), body: appExtBody},
+    ];
+}
 
 class Store {
     static get guid() {
@@ -171,26 +206,46 @@ class Store {
             'iCloud-DSID': dsid,
             'X-Dsid': dsid,
         };
-        let parsedResp = this.#storePost(
-            t('label_download_app'),
-            endpoint.url(this.guid, authContext?.pod),
-            endpoint.buildBody({appIdentifier, appVerId, guid: this.guid}),
-            headers,
-            authContext
-        );
-        // Asspp/ApplePackage 的兼容路径：Apple 会对部分第三方 App 在主端点
-        // 返回 5002，近期也会返回 status=0 + 空 songList。两种情况都改走
-        // downloaddispatch 的 redownload 端点；Gemini 等 App 的历史数据在这里可用。
-        if (String(parsedResp.failureType || '') === '5002' || !parsedResp.songList?.[0]) {
-            const redownload = _endpoints.Redownload;
-            parsedResp = this.#storePost(
-                t('label_download_app'),
-                redownload.url(this.guid),
-                endpoint.buildBody({appIdentifier, appVerId, guid: this.guid, redownload: true}),
-                headers,
-                authContext
-            );
+        const candidates = downloadInfoCandidates({
+            appIdentifier,
+            appVerId,
+            guid: this.guid,
+            pod: authContext?.pod,
+        });
+
+        let parsedResp = null;
+        let lastFailure = null;
+        for (const [index, candidate] of candidates.entries()) {
+            const isLast = index === candidates.length - 1;
+            let resp;
+            try {
+                resp = this.#storePost(t('label_download_app'), candidate.url, candidate.body, headers, authContext);
+            } catch (error) {
+                // 认证失效立刻上抛（交给上层重登）；其它端点异常先换下一个，末个候选才传播。
+                if (error?.code === 'TOKEN_EXPIRED' || isLast) throw error;
+                lastFailure = error;
+                continue;
+            }
+            parsedResp = resp;
+
+            // 可立即判定的信号不浪费后续请求：认证失效、服务器繁忙、缺许可。
+            if (isAuthFailureResponse(resp.failureType, resp.customerMessage)) break;
+            const failureCode = appInfoFailureCode(resp.failureType, resp.customerMessage);
+            if (failureCode === 'APPINFO_BUSY' || failureCode === 'LICENSE_NOT_FOUND') break;
+            // 只有末个候选的 customerMessage 才对外抛出，中间端点的
+            // “No longer available”/5002 属于可继续尝试的空响应（语义与旧实现一致）。
+            if (isLast) break;
+            if (needsDownloadFallback(resp)) continue;
+            break;
         }
+
+        if (!parsedResp) {
+            if (lastFailure) throw lastFailure;
+            const empty = new Error(t('appinfo_nodata'));
+            empty.code = listVersions ? 'APPINFO_EMPTY' : 'APPINFO_FAIL';
+            throw empty;
+        }
+
         const failureCode = appInfoFailureCode(parsedResp.failureType, parsedResp.customerMessage);
         if (failureCode === 'APPINFO_BUSY') {
             const e = new Error(t('appinfo_busy'));
@@ -207,9 +262,9 @@ class Store {
         }
         if (!parsedResp.songList?.[0]) {
             const e = new Error(t('appinfo_nodata'));
-            // Apple sometimes reports an unowned free App as status=0 with an
-            // empty songList instead of failureType=9610. Only the version-list
-            // path may interpret that response as a missing license candidate.
+            // Apple sometimes reports an unowned free App as status=0 with an empty songList instead
+            // of failureType=9610. Only the version-list path may interpret that response as a
+            // missing license candidate.
             e.code = listVersions ? 'APPINFO_EMPTY' : 'APPINFO_FAIL';
             throw e;
         }
@@ -229,8 +284,11 @@ class Store {
             const parsedResp = this.#storePost(t('label_purchase'), url, endpoint.buildBody({appid, appVerId, guid: this.guid, pricingParameters}), headers, authContext);
             const successKind = purchaseSuccessKind(parsedResp);
             if (successKind) {
-                const message = successKind === 'existing' ? t('lic_in_library') : t('lic_new');
-                return {...parsedResp, _state: 'success', customerMessage: message};
+                const isExisting = successKind === 'existing';
+                const message = isExisting ? t('lic_in_library') : t('lic_new');
+                // _existing 由 successKind 直接给出，避免用已本地化的 customerMessage 反猜语义
+                //（ja/ko/th 的“已存在”文案不含 library/资料库 关键词，反猜会判错）。
+                return {...parsedResp, _state: 'success', _existing: isExisting, customerMessage: message};
             }
             if (isAuthFailureResponse(parsedResp.failureType, parsedResp.customerMessage)) {
                 throw tokenExpiredError();
