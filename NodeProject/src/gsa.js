@@ -207,6 +207,69 @@ function postWithSAP(url, body, jar) {
     return curlRequest('POST', url, {headers, body, follow: false, timeout: 30, jar});
 }
 
+// ---- 瞬时响应重试（对齐 ipatool pkg/appstore/appstore_login.go）----
+// ipatool 的 retryableAuthenticationError()：HTTP 204 / 404 / 429 / 5xx 才重试，
+// 由 sendAuthenticationRequest() 最多重试 3 次、退避 10s→20s（上限 30s），并优先遵循 Retry-After。
+// 我们额外把 curl 状态 0（连不上/超时）也纳入重试：这正是“网络被拦截”时的典型表现。
+export function retryableAuthenticationStatus(status) {
+    const value = Number(status);
+    if (!Number.isFinite(value) || value === 0) return true;
+    return value === 204 || value === 404 || value === 429 || value >= 500;
+}
+
+// 302/301 只有在**缺少 Location** 时才是异常响应：有 Location 属于正常的 pod 跳转，
+// 必须交给 parseLoginResponse 按 redirect 处理，不能在这里被当成可重试故障。
+export function isRetryableAuthResponse(res) {
+    const status = Number(res?.status);
+    if (status === 302 || status === 301) {
+        return !headerValue(res?.headers || '', 'location');
+    }
+    return retryableAuthenticationStatus(status);
+}
+
+// 解析 Retry-After（秒数或 HTTP 日期）；只在合理范围内生效，上限 30s。
+function parseRetryAfter(raw, now = Date.now()) {
+    const text = String(raw || '').trim();
+    if (!text) return 0;
+    if (/^\d+$/.test(text)) return Math.min(Number(text) * 1000, 30_000);
+    const at = Date.parse(text);
+    if (!Number.isFinite(at)) return 0;
+    return Math.min(Math.max(at - now, 1_000), 30_000);
+}
+
+function sleepSync(ms) {
+    if (!(ms > 0)) return;
+    const state = new Int32Array(new SharedArrayBuffer(4));
+    Atomics.wait(state, 0, 0, ms);
+}
+
+const AUTH_RETRY_MAX_ATTEMPTS = 3;
+const AUTH_RETRY_BASE_DELAY_MS = 10_000;
+const AUTH_RETRY_MAX_DELAY_MS = 30_000;
+
+// 传输层重试与业务循环分开：同一份签名 body 可以安全地原样重发，
+// 不消耗业务 attempt 计数（对齐 ipatool 把重试封装在 sendAuthenticationRequest 内）。
+// send / sleep / log 可注入，便于用假传输验证重试节奏而不真的等 10 秒。
+export function postAuthenticationWithRetry(url, body, jar, {send = postWithSAP, sleep = sleepSync, log = console.log} = {}) {
+    let res = null;
+    for (let attempt = 1; attempt <= AUTH_RETRY_MAX_ATTEMPTS; attempt++) {
+        res = send(url, body, jar);
+        if (!isRetryableAuthResponse(res)) return res;
+        if (attempt === AUTH_RETRY_MAX_ATTEMPTS) return res;
+
+        const retryAfterMs = parseRetryAfter(headerValue(res.headers || '', 'retry-after'));
+        const backoffMs = Math.min(AUTH_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1), AUTH_RETRY_MAX_DELAY_MS);
+        const delayMs = retryAfterMs || backoffMs;
+        log(t('auth_retrying', {
+            status: res.status || 0,
+            attempt,
+            seconds: Math.round(delayMs / 1000),
+        }));
+        sleep(delayMs);
+    }
+    return res;
+}
+
 // ---- 判断是否应 fallback 到 legacy 端点（对齐 shouldRetryWithLegacyAuthenticate()） ----
 // 只有在使用 native endpoint（含 /native/）时才 fallback。
 export function shouldRetryWithLegacyAuthenticate(endpoint, status) {
@@ -238,7 +301,7 @@ function storePasswordAuthenticate(email, password, code, guid, jar, endpoint) {
         const targetURL = redirect !== '' ? redirect : authenticateURL(endpoint);
         redirect = ''; // 清空，对齐：request.URL, _ = util.IfEmpty(redirect, request.URL), ""
 
-        res = postWithSAP(targetURL, body, jar);
+        res = postAuthenticationWithRetry(targetURL, body, jar);
 
         // shouldRetryWithLegacyAuthenticate：native 端点 + 204/403/404/503 → 递归用 legacy 重试
         if (shouldRetryWithLegacyAuthenticate(endpoint, res.status)) {
@@ -283,8 +346,9 @@ export function parseLoginResponse(res, attempt, authCode) {
     }
 
     if (!parsed) {
-        // 无法解析 plist，视为服务端错误
-        return {retry: false, redirect: '', error: new Error(t('store_token_failed')), data: null};
+        // Apple 返回了空 body / 非 plist（实测会出现 204 与无 Location 的 302）。
+        // 这类响应几乎总与网络被拦截或地区限制有关，直接告诉用户换网络/走代理。
+        return {retry: false, redirect: '', error: new Error(t('auth_no_usable_response', {status})), data: null};
     }
 
     const failureType = String(parsed.failureType || '');
@@ -312,9 +376,9 @@ export function parseLoginResponse(res, attempt, authCode) {
         return {retry: false, redirect: '', error: new Error(msg), data: null};
     }
 
-    // 成功条件：有 passwordToken 和 dsPersonId
+    // 成功条件：有 passwordToken 和 dsPersonId（对齐 ipatool：HTTP 非 200 或缺 token 即失败）
     if (status !== 200 || !parsed.passwordToken || !parsed.dsPersonId) {
-        return {retry: false, redirect: '', error: new Error(t('store_token_failed')), data: null};
+        return {retry: false, redirect: '', error: new Error(t('auth_no_usable_response', {status})), data: null};
     }
 
     return {retry: false, redirect: '', error: null, data: parsed};
