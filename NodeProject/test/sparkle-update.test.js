@@ -17,6 +17,14 @@ test('嵌入的 EdDSA 公钥为 32 字节 base64（与签名私钥配对）', ()
     assert.notEqual(key, 'igtEvMP+w7+IDjXogB1ajorx89zR0t5BFgHw6PPcy/Y=');
 });
 
+test('appcast 完全不使用上游（EEliberto）地址', () => {
+    assert.equal(appcast.includes('EEliberto'), false);
+    assert.equal(plist.includes('EEliberto/Pastel-macOS/releases'), false);
+    const app = readFileSync(new URL('../../Pastel/PastelApp.swift', import.meta.url), 'utf8');
+    // 「项目主页」按钮必须指向本仓库；制作人署名除外（署名不含仓库地址）
+    assert.match(app, /https:\/\/github\.com\/junchan0412\/Pastel-for-macOS/);
+});
+
 test('appcast 最新条目指向本仓库下载地址且带 edSignature', () => {
     const first = appcast.match(/<item>([\s\S]*?)<\/item>/)?.[1] || '';
     assert.notEqual(first, '');
