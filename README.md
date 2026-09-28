@@ -6,7 +6,7 @@
   <p>搜索 App、查找历史版本，并将 IPA 轻松传输到 iPhone 或 iPad。</p>
 
   <p>
-    <img src="https://img.shields.io/badge/version-20260928.2-0A84FF?style=flat-square" alt="Version 20260928.2">
+    <img src="https://img.shields.io/badge/version-20260928.3-0A84FF?style=flat-square" alt="Version 20260928.3">
     <img src="https://img.shields.io/badge/macOS-26%2B-111111?style=flat-square&logo=apple" alt="macOS 26 or later">
     <img src="https://img.shields.io/badge/Apple%20Silicon-required-111111?style=flat-square&logo=apple" alt="Apple Silicon required">
     <img src="https://img.shields.io/badge/license-Apache--2.0-6B7280?style=flat-square" alt="Apache 2.0 License">
