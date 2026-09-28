@@ -13,9 +13,9 @@
   </p>
 
   <p>
-    <a href="https://github.com/EEliberto/Pastel-macOS/releases/latest"><strong>下载最新版</strong></a>
+    <a href="https://github.com/junchan0412/Pastel-for-macOS/releases/latest"><strong>下载最新版</strong></a>
     ·
-    <a href="https://github.com/EEliberto/Pastel-macOS/issues">提交问题</a>
+    <a href="https://github.com/junchan0412/Pastel-for-macOS/issues">提交问题</a>
     ·
     <a href="#源码构建">源码构建</a>
   </p>
@@ -72,10 +72,29 @@ Pastel 聚合 Timbrd、Agsy 与 Bilin 的版本 ID 信息，也可以直接从 A
 
 ## 初次使用
 
-1. 从 [GitHub Releases](https://github.com/EEliberto/Pastel-macOS/releases/latest) 下载最新 DMG，并将 Pastel 拖入“应用程序”。
+1. 从 [GitHub Releases](https://github.com/junchan0412/Pastel-for-macOS/releases/latest) 下载最新 DMG，并将 Pastel 拖入“应用程序”。
 2. 打开 Pastel，前往“设置” → “Apple 账户”。
 3. 添加 Apple 账户并按提示完成双重认证。
 4. 登录成功后，Pastel 会识别账户所属地区并完成商店配置。
+
+### 无 Apple 开发者证书的安装（本项目的分发方式）
+
+本安装包**没有** Apple Developer ID 签名与公证，首次打开会被 Gatekeeper 拦截，任选其一放行：
+
+```bash
+# 方式一（推荐）：在「应用程序」中右键 Pastel → 打开 → 再点「打开」
+# 方式二：命令行清除隔离属性
+xattr -dr com.apple.quarantine /Applications/Pastel.app
+```
+
+校验下载完整性（Release 页会给出 SHA-256）：
+
+```bash
+shasum -a 256 Pastel-*.dmg
+```
+
+自动更新不受此限制：Sparkle 的更新包用 **EdDSA（Ed25519）签名**校验，安装器替换应用时不带
+quarantine 属性，因此**更新后无需再次放行**，也完全不依赖 Apple 开发者账号。
 
 账户登录信息保存在系统 iCloud 钥匙串中。Pastel 的认证流程依赖 macOS 自带的 StoreServices，因此必须使用真实的 Mac，虚拟机环境不受支持。
 
@@ -134,6 +153,7 @@ sh Scripts/UpdateAppcast.sh \
 
 ## 鸣谢
 
+- 本项目源自 [EEliberto/Pastel-macOS](https://github.com/EEliberto/Pastel-macOS)，在其基础上继续维护。
 - Apple 登录协议与安全检查参考 [majd/ipatool](https://github.com/majd/ipatool)。
 - 部分代码与实现原理参考 [beer-psi/ipatool.ts](https://github.com/beer-psi/ipatool.ts)。
 - GSA 登录流程依赖 [SideStore](https://github.com/SideStore/SideStore)。
@@ -147,5 +167,5 @@ sh Scripts/UpdateAppcast.sh \
 ---
 
 <div align="center">
-  <sub>如果 Pastel 对你有帮助，欢迎 Star 本项目；遇到问题请前往 <a href="https://github.com/EEliberto/Pastel-macOS/issues">GitHub Issues</a>。</sub>
+  <sub>如果 Pastel 对你有帮助，欢迎 Star 本项目；遇到问题请前往 <a href="https://github.com/junchan0412/Pastel-for-macOS/issues">GitHub Issues</a>。</sub>
 </div>

@@ -2403,7 +2403,7 @@ struct ContentView: View {
     }
 
     private func openProjectPage() {
-        if let url = URL(string: "https://github.com/EEliberto/Pastel-macOS") {
+        if let url = URL(string: "https://github.com/junchan0412/Pastel-for-macOS") {
             NSWorkspace.shared.open(url)
         }
     }
