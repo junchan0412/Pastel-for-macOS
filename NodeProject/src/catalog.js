@@ -296,16 +296,42 @@ async function lookupApp(appId, {country = 'cn', platform = 'iphone'} = {}) {
     }
     if (cleanPlatform === 'mac') {
         const macResults = rawResults.filter(isMacCompatibleItem);
-        // Mac App 的 lookup 必须精确命中：混合结果里的 iOS 同名 App 不能算数。
-        // 无精确结果时宁可返回空（调用方决定回退），不返回错平台数据。
         rawResults = macResults;
     }
-    const results = rawResults.map(item => normalizeApp(item, 'apple', cleanPlatform));
+
+    // 平台严格过滤后为空 → 按 App ID 回退到不带 entity 的全平台 lookup。
+    // 纯数字 App ID 是唯一标识，返回的就是目标 App；平台标签只影响展示，不影响命中。
+    if (!rawResults.length) {
+        try {
+            const fallback = await catalogClient.get('https://itunes.apple.com/lookup', {
+                params: {id: appId, country},
+            });
+            const fallbackResults = Array.isArray(fallback.data.results) ? fallback.data.results : [];
+            const exact = fallbackResults.find(item => asText(item.trackId) === asText(appId))
+                || fallbackResults[0];
+            if (exact) rawResults = [exact];
+        } catch {
+            // 回退失败不致命：保持空结果，交由调用方显示“未找到”。
+        }
+    }
+
+    const results = rawResults.map(item => normalizeApp(item, 'apple', appPlatformFromResult(item, cleanPlatform)));
     return {
         queryType: 'lookup',
         count: results.length,
         results,
     };
+}
+
+// App ID lookup 返回的才是权威平台：
+// - kind=mac-software / vision 设备 → 按检测结果标注（跨标签命中也如实显示）；
+// - iPad 搜索实体返回的即 iPad 应用（kind 常无决定性信号）→ 保留请求标签；
+// - 其余（回退命中的 iOS 应用）→ iphone，避免把 iOS App 误标成 Mac/Vision。
+function appPlatformFromResult(item, requestedPlatform) {
+    const detected = appPlatformFromItem(item, '');
+    if (detected !== 'iphone') return detected;
+    if (normalizeSearchPlatform(requestedPlatform) === 'ipad') return 'ipad';
+    return 'iphone';
 }
 
 async function searchApps(term, {country = 'cn', platform = 'iphone', limit = 30} = {}) {

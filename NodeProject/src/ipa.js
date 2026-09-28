@@ -342,33 +342,74 @@ export class Ipa {
         const versionId = String(appVerId || '').trim();
         if (!appId) throw new Error(t('missing_appid'));
 
-        // 已拥有该 App（任意版本可查）→ 直接返回，不触碰 buyProduct。
-        const owned = await Store.AppInfo(appId, versionId || '', this.auth).catch(error => ({_error: error}));
-        if (!owned?._error) {
-            printJSON({ok: true, state: 'existing', appId, versionId});
-            return owned;
-        }
-        const ownedError = owned._error;
-        const noLicense = ownedError.code === 'LICENSE_NOT_FOUND'
-            || ownedError.code === 'APPINFO_EMPTY'
-            || /License not found|Redownload Unavailable with This Apple Account/i.test(ownedError.message || '');
-        if (!noLicense) throw ownedError;
+        // 许可缺失的判定：与 downloadInfo 同一标准，避免误读成“已拥有”。
+        const isLicenseMissing = (error) => error?.code === 'LICENSE_NOT_FOUND'
+            || error?.code === 'APPINFO_EMPTY'
+            || /License not found|Redownload Unavailable with This Apple Account/i.test(error?.message || '');
+        const probe = () => Store.AppInfo(appId, versionId || '', this.auth)
+            .catch(error => ({_error: error}));
 
-        // 免费 App 才允许申请许可；付费一律拒绝（与 downloadInfo 同一红线）。
+        // 1) 指定版本此刻已可取（含此前已买过）→ 直接返回，绝不重复调 buyProduct。
+        let song = await probe();
+        if (!song?._error) {
+            console.log('@@IPA:purchase-state=verified');
+            printJSON({ok: true, state: 'existing', appId, versionId, verified: true});
+            console.log(t('purchase_ok', {message: t('lic_in_library')}));
+            if (versionId) console.log(t('purchase_version_ok', {version: versionId}));
+            return song;
+        }
+        if (!isLicenseMissing(song._error)) throw song._error;
+
+        // 2) 免费 App 才允许申请许可；付费一律拒绝（与 downloadInfo 同一红线）。
         if (!(await this.isFreeApp(appId))) {
             throw new Error(t('paid_not_purchased'));
         }
 
-        // 参考 IPA-Tool-3.0 的 StoreService.purchaseApp：许可只按当前版本创建，
-        // 历史 versionId 不传给 buyProduct（传了也建不出历史版本的许可）。
+        // 3) 取得账户许可。参考 ipatool Purchase / IPA-Tool-3.0 purchaseApp：
+        //    appExtVrsId 固定为 0，许可按当前版本创建（历史 versionId 传给 buyProduct 建不出历史许可）。
         const purchaseResponse = await Store.purchase(appId, '', this.auth);
         const state = purchaseResponse?._state === 'success'
             && /资料库|library|already|owned/i.test(purchaseResponse?.customerMessage || '')
             ? 'existing'
             : 'new';
         await this.persistCurrentSession().catch(() => {});
-        printJSON({ok: true, state, appId, versionId});
         console.log(t('purchase_ok', {message: purchaseResponse?.customerMessage || t('lic_success')}));
+
+        // 4) 校验“首购旧版本”是否真的达成：许可刚生效时 Apple 有延迟，
+        //    用 ipatool purchase→retry 的节奏轮询 volumeStoreDownloadProduct，
+        //    只取下载信息（拿到 URL 即证明该历史版本可下载），不下载文件。
+        if (!versionId) {
+            console.log('@@IPA:purchase-state=verified');
+            printJSON({ok: true, state, appId, versionId, verified: true});
+            return purchaseResponse;
+        }
+
+        let lastError = null;
+        let verified = false;
+        for (const delayMs of [350, 800, 1600, 3000]) {
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+            const retried = await Store.AppInfo(appId, versionId, this.auth).catch(error => ({_error: error}));
+            if (!retried?._error) {
+                verified = true;
+                song = retried;
+                break;
+            }
+            lastError = retried._error;
+            if (!isLicenseMissing(lastError)) throw lastError;
+        }
+
+        if (verified) {
+            console.log(t('purchase_version_ok', {version: versionId}));
+            console.log('@@IPA:purchase-state=verified');
+            printJSON({ok: true, state, appId, versionId, verified: true});
+            return song;
+        }
+
+        // 许可已成功获取，但指定历史版本仍取不到（多为该版本已被下架）。
+        // 如实报告，交由界面显示提示；不回滚已获得的许可。
+        console.log(t('purchase_version_unavailable', {version: versionId, message: lastError?.message || ''}));
+        console.log('@@IPA:purchase-state=unavailable');
+        printJSON({ok: true, state, appId, versionId, verified: false});
         return purchaseResponse;
     }
 
