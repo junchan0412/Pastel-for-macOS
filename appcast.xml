@@ -3,6 +3,28 @@
     <channel>
         <title>Pastel</title>
         <item>
+            <title>20260928.2</title>
+            <pubDate>Mon, 28 Sep 2026 19:28:46 +0800</pubDate>
+            <link>https://github.com/junchan0412/Pastel-for-macOS/releases/tag/Pastel20260928.2</link>
+            <sparkle:version>2026092804</sparkle:version>
+            <sparkle:shortVersionString>20260928.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="plain-text"><![CDATA[感谢你使用 Pastel！
+
+Pastel 20260928.2 更新内容：
+
+1. 修复登录时偶发报「商店令牌换取失败」的问题：Apple 认证端点有时会返回空响应或不带跳转地址的响应，现在会按最多 3 次、10 秒与 20 秒退避自动重试（优先遵循服务器的 Retry-After），不再把这类瞬时故障当成失败。
+2. 网络类失败给出明确指引：改为提示「Apple 未返回可用的登录响应，请切换网络或走代理后重试」，简体、繁体、日语、韩语、泰语、英语同步更新。
+3. 重试过程会写入任务日志（登录重试：HTTP 状态码、第几次、等待秒数），便于排查网络问题。
+
+本安装包未使用 Apple 开发者证书签名与公证，首次打开需放行 Gatekeeper（右键 → 打开，或执行 `xattr -dr com.apple.quarantine /Applications/Pastel.app`）；自动更新由 Sparkle 的 EdDSA 签名保护，与 Apple 证书无关。
+
+Pastel-20260928.2-build-2026092804.dmg SHA-256：`5b05f4b23ff4986cb41d74debb051e387aa07621e99e3b345d39f87e0d687673`
+]]></description>
+            <enclosure url="https://github.com/junchan0412/Pastel-for-macOS/releases/download/Pastel20260928.2/Pastel-20260928.2-build-2026092804.dmg" length="55123385" type="application/octet-stream" sparkle:edSignature="6PJIQ5fYfEQNY3sZ8zFZ7pdo9SFhJHplaShLJsh8e//c5WY51Jwn835K+D4hoSm4P/5v68rTcb16kTmAu+hFCA=="/>
+        </item>
+        <item>
             <title>20260928.1</title>
             <pubDate>Mon, 28 Sep 2026 17:51:17 +0800</pubDate>
             <link>https://github.com/junchan0412/Pastel-for-macOS/releases/tag/Pastel20260928.1</link>
