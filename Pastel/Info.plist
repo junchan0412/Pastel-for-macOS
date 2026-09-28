@@ -29,9 +29,9 @@
     <key>SUEnableAutomaticChecks</key>
     <true/>
     <key>SUFeedURL</key>
-    <string>https://raw.githubusercontent.com/EEliberto/Pastel-macOS/main/appcast.xml</string>
+    <string>https://raw.githubusercontent.com/junchan0412/Pastel-for-macOS/main/appcast.xml</string>
     <key>SUPublicEDKey</key>
-    <string>igtEvMP+w7+IDjXogB1ajorx89zR0t5BFgHw6PPcy/Y=</string>
+    <string>24rHIwxdf1RPUbpRtm5Dt9VE7jS/QnqdEU+uFM+GiU4=</string>
     <key>SUVerifyUpdateBeforeExtraction</key>
     <true/>
 </dict>
