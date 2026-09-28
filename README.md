@@ -38,6 +38,7 @@
 | IPA 下载与管理 | 下载从 Apple 获取的 IPA，在 App 内查看文件及 App 图标 |
 | 快速传输 | 通过系统分享菜单或 AirDrop 将 IPA 发送到 iPhone、iPad |
 | 完整代理支持 | 遵循 macOS 的 HTTP、HTTPS、SOCKS5、`ALL_PROXY`、`NO_PROXY` 及系统排除项规则 |
+| 自动更新 | 通过 [Sparkle](https://github.com/sparkle-project/Sparkle) 从 GitHub appcast 检查新版本，更新包 EdDSA 签名校验后安装 |
 
 ## 主页面
 
@@ -108,6 +109,28 @@ cd ..
 ```
 
 随后使用 Xcode 打开 `Pastel.xcodeproj` 并构建运行。
+
+## 自动更新（Sparkle）
+
+应用内置 Sparkle：启动时自动检查，也可用菜单 **检查更新…** 或设置页的 **检查更新** 手动触发。检查地址由 `Pastel/Info.plist` 的 `SUFeedURL` 决定，签名校验公钥为 `SUPublicEDKey`。
+
+发布一个新版本的步骤：
+
+```bash
+# 1. 提升版本号（Pastel.xcodeproj：MARKETING_VERSION / CURRENT_PROJECT_VERSION）
+# 2. 构建 DMG
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+  PASTEL_OUTPUT_DIR="$PWD/dist" sh Scripts/BuildAdHocDMG.sh
+
+# 3. 签名并写入 appcast.xml（edSignature、体积、发布时间、下载地址一并生成）
+sh Scripts/UpdateAppcast.sh \
+  dist/Pastel-<版本>-build-<构建号>.dmg <版本> <构建号> <release-tag>
+
+# 4. 创建 GitHub Release 并上传该 DMG
+# 5. 提交 appcast.xml 到 main（SUFeedURL 取自 raw.githubusercontent.com 的 main 分支）
+```
+
+签名私钥由 Sparkle 的 `generate_keys` 存进 macOS 钥匙串；仓库根目录的 `SPARKLE_SIGNING_KEY.md` 只是本机备份，已被 `.gitignore` 忽略，**不要提交**。
 
 ## 鸣谢
 

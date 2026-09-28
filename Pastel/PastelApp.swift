@@ -1401,6 +1401,7 @@ final class DownloadManager {
         var needsCode: Bool = false
         var awaitingSession: Bool = false
         var needsAcquisition: Bool = false
+        var purchaseState: PurchaseOutcome?
     }
 
     private(set) var jobs: [String: Job] = [:]
@@ -1555,6 +1556,8 @@ final class DownloadManager {
         let normalized = text.replacingOccurrences(of: "\r", with: "\n")
         if normalized.contains("@@IPA:phase=packaging") { job.isPackaging = true }
         if normalized.contains("@@IPA:requires-acquisition") { job.needsAcquisition = true }
+        if normalized.contains("@@IPA:purchase-state=verified") { job.purchaseState = .verified }
+        if normalized.contains("@@IPA:purchase-state=unavailable") { job.purchaseState = .unavailable }
         let cleaned = normalized
             .split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.hasPrefix("@@IPA:") }
@@ -2823,7 +2826,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 18, height: 18)
 
-            TextField(String(localized: "搜索 App"), text: $catalog.searchQuery)
+            TextField(String(localized: "App 名称或 App ID"), text: $catalog.searchQuery)
                 .textFieldStyle(.plain)
                 .font(.callout)
                 .focused($activeField, equals: .search)
@@ -2869,19 +2872,12 @@ struct ContentView: View {
                 Button {
                     selectSearchPlatform(platform)
                 } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: platform.symbolName)
-                            .font(.system(size: platform == .vision ? 13 : 14, weight: .semibold))
-                            .symbolRenderingMode(.hierarchical)
-                            .frame(width: 18, height: 18)
-
-                        Text(platform.title)
-                            .font(.callout)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 30)
-                    .padding(.horizontal, 10)
-                    .foregroundStyle(isSelected ? Color.white : Color.secondary)
+                    Image(systemName: platform.symbolName)
+                        .font(.system(size: platform == .vision ? 15 : 17, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .frame(maxWidth: .infinity, minHeight: 30)
+                        .foregroundStyle(isSelected ? Color.white : Color.secondary)
+                        .accessibilityLabel(platform.title)
                     .background {
                         if isSelected {
                             Capsule()
@@ -2891,6 +2887,7 @@ struct ContentView: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(StablePressButtonStyle())
+                .help(platform.title)
 
                 if index < AppSearchPlatform.allCases.count - 1 {
                     Rectangle()
@@ -3061,7 +3058,7 @@ struct ContentView: View {
                                             isPurchasing: isPurchasingVersion(record),
                                             hasPurchaseError: purchaseJobFor(record)?.status == .failed,
                                             purchaseErrorLog: purchaseJobFor(record)?.log ?? "",
-                                            purchaseSucceeded: purchaseSucceededFor(record),
+                                            purchaseOutcome: purchaseOutcomeFor(record),
                                             onSignIn: showRelogin,
                                             onReveal: {
                                                 if let url = downloadedFileFor(record, removesAppStoreUpdates: noUpdateEnabled(for: record)) { revealInFinder(url) }
@@ -3275,11 +3272,20 @@ struct ContentView: View {
                 .disabled(!canDownloadManualVersion)
 
                 if manualPurchaseSucceeded {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
-                        .help(String(localized: "已购买"))
+                    switch manualPurchaseJob()?.purchaseState ?? .verified {
+                    case .verified:
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
+                            .help(String(localized: "已购买 · 指定版本可下载"))
+                    case .unavailable:
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.orange)
+                            .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
+                            .help(String(localized: "已购买 · 该版本暂不可取"))
+                    }
                 } else if isManualPurchasing {
                     ProgressView()
                         .controlSize(.small)
@@ -3454,7 +3460,7 @@ struct ContentView: View {
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(.secondary)
 
-                TextField(String(localized: "输入 App 名称"), text: $catalog.searchQuery)
+                TextField(String(localized: "App 名称或 App ID"), text: $catalog.searchQuery)
                     .textFieldStyle(.plain)
                     .font(.body)
                     .focused($activeField, equals: .search)
@@ -3666,7 +3672,7 @@ struct ContentView: View {
                                     isPurchasing: isPurchasingVersion(record),
                                     hasPurchaseError: purchaseJobFor(record)?.status == .failed,
                                     purchaseErrorLog: purchaseJobFor(record)?.log ?? "",
-                                    purchaseSucceeded: purchaseSucceededFor(record),
+                                    purchaseOutcome: purchaseOutcomeFor(record),
                                     onSignIn: showRelogin,
                                     onReveal: {
                                         if let url = downloadedFileFor(record, removesAppStoreUpdates: noUpdateEnabled(for: record)) { revealInFinder(url) }
@@ -5295,8 +5301,10 @@ struct ContentView: View {
         downloads.isRunning(purchaseJobID(for: record))
     }
 
-    private func purchaseSucceededFor(_ record: VersionRecord) -> Bool {
-        purchaseJobFor(record)?.status == .done
+    // 购买结果：running/failed 时状态由其它分支展示，只有 done 才取标记结果。
+    private func purchaseOutcomeFor(_ record: VersionRecord) -> PurchaseOutcome? {
+        guard let job = purchaseJobFor(record), job.status == .done else { return nil }
+        return job.purchaseState ?? .verified
     }
 
     // 指定 App 指定版本的首次购买：只申请许可（buyProduct），不下载 IPA。

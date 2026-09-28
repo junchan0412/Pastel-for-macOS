@@ -11,6 +11,12 @@ final class VersionHistoryFeatureState {
     var appleVersionFetchNeedsAcquisition = false
 }
 
+// 首购结果：verified = 指定历史版本已验证可下载；unavailable = 许可已拿到但该版本取不到。
+enum PurchaseOutcome: String, Sendable {
+    case verified
+    case unavailable
+}
+
 struct SourceProviderCapsule: View {
     let selection: String
     let isDisabled: Bool
@@ -240,7 +246,7 @@ struct VersionSelectionRow: View {
     let isPurchasing: Bool
     let hasPurchaseError: Bool
     let purchaseErrorLog: String
-    let purchaseSucceeded: Bool
+    let purchaseOutcome: PurchaseOutcome?
     let onSignIn: () -> Void
     let onReveal: () -> Void
     let onAirDrop: () -> Void
@@ -390,12 +396,21 @@ struct VersionSelectionRow: View {
     // 已购买（downloaded）、进行中（running/error）时不展示购买入口。
     @ViewBuilder
     private var purchaseButton: some View {
-        if purchaseSucceeded {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
-                .help(String(localized: "已购买"))
+        if let purchaseOutcome {
+            switch purchaseOutcome {
+            case .verified:
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
+                    .help(String(localized: "已购买 · 指定版本可下载"))
+            case .unavailable:
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.orange)
+                    .frame(width: VersionSelectionRow.purchaseButtonWidth, height: 26)
+                    .help(String(localized: "已购买 · 该版本暂不可取"))
+            }
         } else if isPurchasing {
             ProgressView()
                 .controlSize(.small)
