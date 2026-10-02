@@ -2992,14 +2992,14 @@ struct ContentView: View {
                                 largeEmptyState(
                                     systemImage: "app.badge",
                                     title: String(localized: "需要获取 App"),
-                                    message: String(localized: "此 Apple 账户未拥有此 App，是否从 Apple 获取此 App？"),
+                                    message: String(localized: "获取将购买当前版本。首次购买指定旧版本，请改用其他来源或手动输入版本 ID。"),
                                     fills: false
                                 )
 
                                 Button {
                                     fetchVersionIDsFromApple(allowAppAcquisition: true)
                                 } label: {
-                                    Text(String(localized: "获取"))
+                                    Text(String(localized: "获取当前版本"))
                                 }
                                 .buttonStyle(.glassProminent)
                                 .controlSize(.large)
@@ -3272,7 +3272,7 @@ struct ContentView: View {
                 .disabled(!canDownloadManualVersion)
 
                 if manualPurchaseSucceeded {
-                    switch manualPurchaseJob()?.purchaseState ?? .verified {
+                    switch manualPurchaseJob()?.purchaseState ?? .unavailable {
                     case .verified:
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 15, weight: .semibold))
@@ -5304,7 +5304,7 @@ struct ContentView: View {
     // 购买结果：running/failed 时状态由其它分支展示，只有 done 才取标记结果。
     private func purchaseOutcomeFor(_ record: VersionRecord) -> PurchaseOutcome? {
         guard let job = purchaseJobFor(record), job.status == .done else { return nil }
-        return job.purchaseState ?? .verified
+        return job.purchaseState ?? .unavailable
     }
 
     // 指定 App 指定版本的首次购买：只申请许可（buyProduct），不下载 IPA。
@@ -5472,7 +5472,7 @@ struct ContentView: View {
             versionFeature.selectedVersionIDs.removeAll()
             versionFeature.lastSelectedVersionID = nil
             versionFeature.appleVersionFetchNeedsAcquisition = true
-            catalog.versionStatus = String(localized: "此 Apple 账户未拥有此 App，是否从 Apple 获取此 App？")
+            catalog.versionStatus = String(localized: "获取将购买当前版本。首次购买指定旧版本，请改用其他来源或手动输入版本 ID。")
             return
         }
         let latestVersionID = obj["latestVersionId"] as? String ?? ""

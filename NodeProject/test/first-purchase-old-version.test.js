@@ -1,46 +1,127 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync, writeFileSync} from 'node:fs';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import plist from 'plist';
+import {Store} from '../src/client.js';
+import {Ipa} from '../src/ipa.js';
 
 const ipa = readFileSync(new URL('../src/ipa.js', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../../Pastel/PastelApp.swift', import.meta.url), 'utf8');
+const auth = {authHeaders: {'X-Dsid': 'test-dsid'}, pod: '25'};
+const success = {jingleDocType: 'purchaseSuccess', status: 0};
+const song = (versionId) => ({URL: 'https://example.invalid/app.ipa', metadata: {
+    softwareVersionExternalIdentifier: versionId,
+    softwareVersionExternalIdentifiers: ['100', '200'],
+}});
 
-test('首购：许可探测不固定版本且空 songList 视为缺许可，已拥有则绝不下单', () => {
-    const block = ipa.match(/async _purchaseOnce\([\s\S]*?\n    \}/)?.[0] || '';
-    assert.notEqual(block, '');
-    // 许可是账户级的：不固定版本；listVersions 让 Apple 的“status=0 + 空 songList”按缺许可处理
-    assert.match(block, /Store\.AppInfo\(appId, '', this\.auth, \{listVersions: true\}\)/);
-    // 指定版本的可用性用固定版本的请求单独确认
-    assert.match(block, /Store\.AppInfo\(appId, vid, this\.auth\)/);
-    // 探测失败但不是“缺许可”（如认证过期、服务器错误）必须原样上抛，不能误判成缺许可
-    assert.match(block, /if \(!owned && !isLicenseMissing\(license\._error\)\) throw license\._error/);
-    // 已拥有 → 直接发布结果，不进入 buyProduct
-    assert.match(block, /if \(owned && !versionId\)/);
-    // 免费才买、付费一律拒绝
-    assert.match(block, /isFreeApp\(appId\)/);
-    assert.match(block, /paid_not_purchased/);
-    // 下单固定当前版本（历史 versionId 不传给 buyProduct）
-    assert.match(block, /Store\.purchase\(appId, '', this\.auth\)/);
-    // 购买语义来自 successKind，而不是本地化文案关键词
-    assert.match(block, /purchaseResponse\?\._existing \? 'existing' : 'new'/);
-    assert.doesNotMatch(block, /资料库\|library/);
-    // 顺序：先探测许可，再决定是否购买
-    const probeAt = block.indexOf('await probeLicense()');
-    const purchaseAt = block.indexOf('Store.purchase(appId');
-    assert.ok(probeAt > -1 && purchaseAt > probeAt, '必须先探测许可再购买');
+function storeResponses(t, responses) {
+    const requests = [];
+    t.mock.getter(Store, 'guid', () => 'AABBCCDDEEFF');
+    const exec = t.mock.method(childProcess, 'execFileSync', (file, args) => {
+        if (file === '/usr/sbin/scutil') return Buffer.from('');
+        assert.equal(file, '/usr/bin/curl');
+        const bodyPath = args[args.indexOf('--data-binary') + 1].slice(1);
+        requests.push({url: args[args.indexOf('-X') + 2], body: plist.parse(readFileSync(bodyPath, 'utf8'))});
+        assert.ok(responses.length, 'unexpected Store request');
+        writeFileSync(args[args.indexOf('-o') + 1], plist.build(responses.shift()));
+        return Buffer.from('200');
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+        exec.mock.restore();
+        syncBuiltinESMExports();
+        Store.cleanup();
+    });
+    return requests;
+}
+
+test('buyProduct 序列化指定版本，未指定时才使用 0', async t => {
+    const requests = storeResponses(t, [{...success, songList: [song('100')]}, success]);
+    await Store.purchase('42', '100', auth);
+    await Store.purchase('42', '', auth);
+    assert.deepEqual(requests.map(r => r.body.appExtVrsId), ['100', '0']);
+    assert.ok(requests.every(r => r.url.endsWith('/buyProduct') && r.body.salableAdamId === '42'));
 });
 
-test('首购后轮询指定历史版本，验证其真正可下载', () => {
-    const block = ipa.match(/async _purchaseOnce\([\s\S]*?\n    \}/)?.[0] || '';
-    assert.match(block, /for \(const delayMs of \[350, 800, 1600, 3000\]\)/);
-    assert.match(block, /await probeVersion\(versionId\)/);
-    assert.match(block, /purchase_version_ok/);
-    assert.match(block, /purchase_version_unavailable/);
-    // 购买成功但版本取不到时如实报告（verified=false → 界面显示橙色提示）
-    assert.match(block, /publish\(state, false\)/);
-    assert.match(block, /@@IPA:purchase-state=unavailable/);
-    // 已拥有却取不到该版本（版本已下架）同样如实报告，且不重复购买
-    assert.match(block, /if \(!isLicenseMissing\(pinned\._error\)\)/);
+test('GAME 重试仍购买相同指定版本', async t => {
+    const requests = storeResponses(t, [{failureType: '2059'}, {...success, songList: [song('100')]}]);
+    await Store.purchase('42', '100', auth);
+    assert.deepEqual(requests.map(r => [r.body.pricingParameters, r.body.appExtVrsId]), [
+        ['STDQ', '100'], ['GAME', '100'],
+    ]);
+});
+
+test('购买失败不得回退到最新版本', async t => {
+    const requests = storeResponses(t, [{failureType: '5002', customerMessage: 'Not available'}]);
+    await assert.rejects(Store.purchase('42', '100', auth), {code: 'LICENSE_FAIL'});
+    assert.deepEqual(requests.map(r => r.body.appExtVrsId), ['100']);
+});
+
+test('通用购买成功但无版本字段时，不得认定为指定版本首购成功', async t => {
+    const requests = storeResponses(t, [success]);
+    await assert.rejects(Store.purchase('42', '100', auth), {code: 'APPINFO_VERSION_MISMATCH'});
+    assert.deepEqual(requests.map(r => r.body.appExtVrsId), ['100']);
+});
+
+test('购买响应必须匹配指定版本，历史 ID 列表不能证明当前返回的就是该版本', async t => {
+    const requests = storeResponses(t, [
+        {...success, songList: [song('200')]},
+        {...success, songList: [{metadata: {softwareVersionExternalIdentifiers: ['100']}}]},
+        {...success, songList: [{metadata: {softwareVersionExternalIdentifier: 100}}]},
+    ]);
+    await assert.rejects(Store.purchase('42', '100', auth), {code: 'APPINFO_VERSION_MISMATCH'});
+    await assert.rejects(Store.purchase('42', '100', auth), {code: 'APPINFO_VERSION_MISMATCH'});
+    assert.equal((await Store.purchase('42', '100', auth))._existing, false);
+    assert.equal(requests.length, 3);
+});
+
+test('下载端点返回最新版本时继续查找指定版本，所有请求保持版本 ID', async t => {
+    const requests = storeResponses(t, [
+        {songList: [song('200')]}, {songList: [song('200')]}, {songList: [song(100)]},
+    ]);
+    const response = await Store.AppInfo('42', '100', auth);
+    assert.equal(response.songList[0].metadata.softwareVersionExternalIdentifier, 100);
+    assert.deepEqual(requests.map(r => r.body.externalVersionId ?? r.body.appExtVrsId), ['100', '100', '100']);
+    assert.match(requests[2].url, /updateProduct/);
+});
+
+test('所有端点返回最新版本、缺少版本标识或下载 URL 时不得验证成功', async t => {
+    for (const [name, entry, code] of [
+        ['latest', song('200'), 'APPINFO_VERSION_MISMATCH'],
+        ['missing ID', {URL: 'https://example.invalid/app.ipa', metadata: {softwareVersionExternalIdentifiers: ['100']}}, 'APPINFO_VERSION_MISMATCH'],
+        ['missing URL', {metadata: {softwareVersionExternalIdentifier: '100'}}, 'APPINFO_FAIL'],
+    ]) {
+        await t.test(name, async sub => {
+            const requests = storeResponses(sub, Array.from({length: 4}, () => ({songList: [entry]})));
+            await assert.rejects(Store.AppInfo('42', '100', auth), {code});
+            assert.equal(requests.length, 4);
+            assert.ok(requests.every(r => (r.body.externalVersionId ?? r.body.appExtVrsId) === '100'));
+        });
+    }
+});
+
+test('下载时首次补购也将指定版本写入实际 buyProduct 请求', async t => {
+    const requests = storeResponses(t, [
+        {failureType: '9610'}, {...success, songList: [song('100')]}, {songList: [song('100')]},
+    ]);
+    const client = new Ipa({APPLE_ID: 'test@example.invalid', PASSWORD: 'unused'});
+    client.auth = auth;
+    t.mock.method(client, 'isFreeApp', async () => true);
+    t.mock.method(console, 'log', () => {});
+    t.mock.method(globalThis, 'setTimeout', callback => queueMicrotask(callback));
+    const old = process.env.IPA_ALLOW_APP_ACQUIRE;
+    process.env.IPA_ALLOW_APP_ACQUIRE = '1';
+    t.after(() => {
+        if (old === undefined) delete process.env.IPA_ALLOW_APP_ACQUIRE;
+        else process.env.IPA_ALLOW_APP_ACQUIRE = old;
+    });
+    const result = await client.downloadInfo('42', '100');
+    assert.equal(result.metadata.softwareVersionExternalIdentifier, '100');
+    assert.equal(requests.length, 3);
+    assert.match(requests[1].url, /buyProduct$/);
+    assert.equal(requests[1].body.appExtVrsId, '100');
 });
 
 test('购买结果机器标记供界面区分已购买/该版本不可取', () => {
@@ -49,6 +130,7 @@ test('购买结果机器标记供界面区分已购买/该版本不可取', () =
     assert.match(app, /purchase-state=verified/);
     assert.match(app, /purchase-state=unavailable/);
     assert.match(app, /purchaseState: PurchaseOutcome\?/);
+    assert.doesNotMatch(app, /purchaseState \?\? \.verified/);
 });
 
 test('左侧平台选择器只显示设备图标（无文字）', () => {
@@ -66,15 +148,4 @@ test('App ID 搜索支持平台严格匹配落空后的全平台回退', () => {
     assert.match(catalog, /App ID lookup 返回的才是权威平台/);
     assert.match(catalog, /params: \{id: appId, country\}/);
     assert.match(catalog, /appPlatformFromResult/);
-});
-
-test('购买后校验：认证过期上抛、明确“版本不可用”才提前结束，其余继续轮询', () => {
-    const block = ipa.match(/async _purchaseOnce\([\s\S]*?\n    \}/)?.[0] || '';
-    assert.notEqual(block, '');
-    // 认证过期 → 交给 _withReauth 整体重试
-    assert.match(block, /lastError\.code === 'TOKEN_EXPIRED'\) throw lastError/);
-    // 只有 Apple 明确说 “No longer available” 才提前结束（对齐 ipatool isUnavailableDownloadProductResponse）
-    assert.match(block, /\/no longer available\/i\.test\(lastError\.message \|\| ''\)\) break/);
-    // 许可尚未生效 / 端点空响应都应继续轮询，不能在首次失败就放弃
-    assert.doesNotMatch(block, /if \(!isLicenseMissing\(lastError\)\)/);
 });

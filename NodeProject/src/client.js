@@ -73,6 +73,17 @@ export function purchaseSuccessKind(response) {
     return '';
 }
 
+function downloadVersionError(response, appVerId) {
+    const song = response?.songList?.[0];
+    if (!appVerId) return null;
+    const actual = String(song?.metadata?.softwareVersionExternalIdentifier
+        ?? song?.softwareVersionExternalIdentifier ?? '');
+    if (actual === String(appVerId)) return null;
+    const error = new Error(t('appinfo_version_mismatch', {expected: appVerId, actual: actual || '?'}));
+    error.code = 'APPINFO_VERSION_MISMATCH';
+    return error;
+}
+
 const _endpoints = {
     AppInfo: {
         url: (guid, pod) => `https://${podPrefix(pod)}buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/volumeStoreDownloadProduct?guid=${guid}`,
@@ -235,7 +246,7 @@ class Store {
             // 只有末个候选的 customerMessage 才对外抛出，中间端点的
             // “No longer available”/5002 属于可继续尝试的空响应（语义与旧实现一致）。
             if (isLast) break;
-            if (needsDownloadFallback(resp)) continue;
+            if (needsDownloadFallback(resp) || (appVerId && !resp.songList[0].URL) || downloadVersionError(resp, appVerId)) continue;
             break;
         }
 
@@ -255,8 +266,8 @@ class Store {
         if (isAuthFailureResponse(parsedResp.failureType, parsedResp.customerMessage)) {
             throw tokenExpiredError();
         }
-        if (parsedResp.customerMessage) {
-            const e = new Error(t('appinfo_custom', {msg: parsedResp.customerMessage}));
+        if (parsedResp.customerMessage || failureCode === 'LICENSE_NOT_FOUND') {
+            const e = new Error(t('appinfo_custom', {msg: parsedResp.customerMessage || parsedResp.failureType}));
             e.code = failureCode;
             throw e;
         }
@@ -267,6 +278,13 @@ class Store {
             // missing license candidate.
             e.code = listVersions ? 'APPINFO_EMPTY' : 'APPINFO_FAIL';
             throw e;
+        }
+        const versionError = downloadVersionError(parsedResp, appVerId);
+        if (versionError) throw versionError;
+        if (appVerId && !parsedResp.songList[0].URL) {
+            const error = new Error(t('appinfo_nodata'));
+            error.code = 'APPINFO_FAIL';
+            throw error;
         }
         return parsedResp;
     }
@@ -284,6 +302,8 @@ class Store {
             const parsedResp = this.#storePost(t('label_purchase'), url, endpoint.buildBody({appid, appVerId, guid: this.guid, pricingParameters}), headers, authContext);
             const successKind = purchaseSuccessKind(parsedResp);
             if (successKind) {
+                const versionError = successKind === 'new' && downloadVersionError(parsedResp, appVerId);
+                if (versionError) throw versionError;
                 const isExisting = successKind === 'existing';
                 const message = isExisting ? t('lic_in_library') : t('lic_new');
                 // _existing 由 successKind 直接给出，避免用已本地化的 customerMessage 反猜语义

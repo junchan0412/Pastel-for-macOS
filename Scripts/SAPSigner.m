@@ -7,7 +7,7 @@
 // login code never needs native FFI and credentials remain on stdin only.
 @interface PastelCKSigningSession : NSObject
 - (instancetype)initWithStoreClient:(id)storeClient;
-- (void)openSessionWithCompletionHandler:(void (^)(void))completionHandler;
+- (void)openSessionWithCompletionHandler:(void (^)(BOOL success, NSError *error))completionHandler;
 - (NSData *)signData:(NSData *)data error:(NSError **)error;
 - (void)closeSession;
 - (BOOL)isSessionOpen;
@@ -67,7 +67,11 @@ int main(int argc, const char *argv[]) {
         }
 
         dispatch_semaphore_t opened = dispatch_semaphore_create(0);
-        [session openSessionWithCompletionHandler:^{
+        __block BOOL sessionOpened = NO;
+        __block NSError *sessionError = nil;
+        [session openSessionWithCompletionHandler:^(BOOL success, NSError *error) {
+            sessionOpened = success;
+            sessionError = error;
             dispatch_semaphore_signal(opened);
         }];
         long waitResult = dispatch_semaphore_wait(
@@ -80,9 +84,12 @@ int main(int argc, const char *argv[]) {
             return 4;
         }
 
-        if ([session respondsToSelector:@selector(isSessionOpen)] && ![session isSessionOpen]) {
+        if (!sessionOpened || ([session respondsToSelector:@selector(isSessionOpen)] && ![session isSessionOpen])) {
             [session closeSession];
-            writeError(@"Apple SAP signing session did not open");
+            writeError(sessionError != nil
+                ? [NSString stringWithFormat:@"Apple SAP signing session did not open (%@ %ld): %@",
+                    sessionError.domain, (long)sessionError.code, sessionError.localizedDescription]
+                : @"Apple SAP signing session did not open");
             return 4;
         }
 

@@ -3,6 +3,38 @@
     <channel>
         <title>Pastel</title>
         <item>
+            <title>20261002</title>
+            <pubDate>Fri, 02 Oct 2026 08:13:10 +0800</pubDate>
+            <link>https://github.com/junchan0412/Pastel-for-macOS/releases/tag/Pastel20261002</link>
+            <sparkle:version>2026100201</sparkle:version>
+            <sparkle:shortVersionString>20261002</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="plain-text"><![CDATA[感谢你使用 Pastel！
+
+Pastel 20261002（build 2026100201）是登录与购买流程的初步修复版本。
+
+本次修复：
+
+1. 修正 Apple SAP 签名会话的回调参数，保留系统返回的具体错误。初始化失败最多重试 3 次，总等待不超过 35 秒。
+2. 购买及下载补购请求保留用户指定的版本 ID，不再主动清空为最新版本。
+3. 严格核对 Apple 返回的版本 ID。返回其他版本、缺少版本信息或缺少下载地址时，不再认定指定版本验证成功；购买仅返回通用成功、未确认目标版本时明确报错。
+4. 已拥有 App 时避免重复购买；修正认证失效与缺少许可的判断，界面未收到验证标记时不再默认显示成功。
+5. Apple 版本查询入口明确提示“获取当前版本”，说明该操作会创建当前版本的许可。
+
+已知限制：
+
+真正的“首次购买指定旧版本许可”尚未实现。本次实测中，指定旧版请求成功后虽可取得旧版下载信息，Apple 购买历史仍记录为当前版本。当前版本不能作为该功能已完成的保证；指定旧版首购即使显示未确认，Apple 也可能已经创建了当前版本的 App 许可。
+
+验证：82 项 Node.js 测试通过，macOS Release 构建及安装包校验通过。
+
+本安装包采用 ad hoc 签名，未使用 Apple Developer ID 签名与公证。首次安装如被 Gatekeeper 拦截，可右键 App → 打开；后续自动更新由 Sparkle 的 EdDSA 签名校验保护。
+
+Pastel-20261002-build-2026100201.dmg SHA-256：`3a8d6e9e9c4e560ca37753b91ee320737976c5382e200b3e65ec181c89bbe963`
+]]></description>
+            <enclosure url="https://github.com/junchan0412/Pastel-for-macOS/releases/download/Pastel20261002/Pastel-20261002-build-2026100201.dmg" length="55124369" type="application/octet-stream" sparkle:edSignature="oox/dMeRaJtjDcYKg+GFpSoW1i7j3p7r82DPlnJcXV0FlIZV/qYm0+tcLCoZN1UZyFiGt+4NGeciQOHpjSCFDw=="/>
+        </item>
+        <item>
             <title>20260928.3</title>
             <pubDate>Mon, 28 Sep 2026 20:22:20 +0800</pubDate>
             <link>https://github.com/junchan0412/Pastel-for-macOS/releases/tag/Pastel20260928.3</link>

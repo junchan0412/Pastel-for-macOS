@@ -347,7 +347,7 @@ export class Ipa {
             || error?.code === 'APPINFO_EMPTY'
             || /License not found|Redownload Unavailable with This Apple Account/i.test(error?.message || '');
 
-        // 1) 许可是**账户级**的，与版本无关：不固定版本探测。
+        // 1) 不固定版本探测账户是否已拥有该 App，避免重复下单。
         //    listVersions 让 Apple 的“status=0 + 空 songList”按缺许可处理
         //（client.js 注释记录的正是该真实行为），否则首购在这些 App 上根本走不到 buyProduct。
         const probeLicense = () => Store.AppInfo(appId, '', this.auth, {listVersions: true})
@@ -379,13 +379,10 @@ export class Ipa {
                 console.log(t('purchase_version_ok', {version: versionId}));
                 return pinned;
             }
-            // 已拥有却取不到该版本：多为该历史版本已被下架 —— 不重复购买，直接报告。
-            if (!isLicenseMissing(pinned._error)) {
-                publish('existing', false);
-                console.log(t('purchase_version_unavailable', {version: versionId, message: pinned._error.message || ''}));
-                return license;
-            }
-            // 极少数情况：Apple 对已拥有 App 仍报缺许可 → 继续走购买（buyProduct 会返回“已存在”）。
+            if (pinned._error.code === 'TOKEN_EXPIRED') throw pinned._error;
+            publish('existing', false);
+            console.log(t('purchase_version_unavailable', {version: versionId, message: pinned._error.message || ''}));
+            return license;
         }
 
         // 3) 未拥有：付费一律拒绝（与 downloadInfo 同一红线），免费才申请许可。
@@ -393,9 +390,8 @@ export class Ipa {
             throw new Error(t('paid_not_purchased'));
         }
 
-        // 4) 取得账户许可。参考 ipatool Purchase / IPA-Tool-3.0 purchaseApp：
-        //    appExtVrsId 固定为 0，许可按当前版本创建（历史 versionId 传给 buyProduct 建不出历史许可）。
-        const purchaseResponse = await Store.purchase(appId, '', this.auth);
+        // 4) 指定版本必须传入 buyProduct；只有未指定版本才使用 appExtVrsId=0。
+        const purchaseResponse = await Store.purchase(appId, versionId, this.auth);
         const state = purchaseResponse?._existing ? 'existing' : 'new';
         await this.persistCurrentSession().catch(() => {});
         console.log(t('purchase_ok', {message: purchaseResponse?.customerMessage || t('lic_success')}));
@@ -453,10 +449,7 @@ export class Ipa {
                 throw error;
             }
 
-            // Acquire the current free App license, then request the originally
-            // selected historical version. Passing the historical version to
-            // buyProduct is not a valid way to create a new account license.
-            await Store.purchase(APPID, '', this.auth);
+            await Store.purchase(APPID, appVerId, this.auth);
             let lastError = error;
             for (const delayMs of [350, 800, 1600, 3000]) {
                 await new Promise(resolve => setTimeout(resolve, delayMs));

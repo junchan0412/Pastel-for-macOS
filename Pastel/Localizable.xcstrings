@@ -7157,36 +7157,36 @@
     "此 Apple 账户暂时无法获取该 App。请确认账号已拥有此 App 后再试。" : {
 
     },
-    "此 Apple 账户未拥有此 App，是否从 Apple 获取此 App？" : {
+    "获取将购买当前版本。首次购买指定旧版本，请改用其他来源或手动输入版本 ID。" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "This Apple Account does not own this app. Get this app from Apple?"
+            "value" : "This acquires the current version. To make a specific older version your first purchase, use another source or enter its version ID manually."
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "このAppleアカウントはこのAppを所有していません。AppleからこのAppを入手しますか？"
+            "value" : "現行バージョンを入手します。特定の旧バージョンを初回購入する場合は、別の提供元を使うか、バージョンIDを手動で入力してください。"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "이 Apple 계정은 이 App을 보유하고 있지 않습니다. Apple에서 이 App을 받으시겠습니까?"
+            "value" : "현재 버전을 받습니다. 특정 이전 버전을 처음 구매하려면 다른 제공처를 사용하거나 버전 ID를 직접 입력하세요."
           }
         },
         "th" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "บัญชี Apple นี้ยังไม่มี App นี้ ต้องการรับ App นี้จาก Apple หรือไม่?"
+            "value" : "การรับจะซื้อเวอร์ชันปัจจุบัน หากต้องการซื้อเวอร์ชันเก่าที่ระบุเป็นครั้งแรก ให้ใช้แหล่งอื่นหรือป้อน ID เวอร์ชันด้วยตนเอง"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此 Apple 帳戶未擁有此 App，是否從 Apple 取得此 App？"
+            "value" : "取得將購買目前版本。首次購買指定舊版本，請改用其他來源或手動輸入版本 ID。"
           }
         }
       }
@@ -8455,36 +8455,36 @@
         }
       }
     },
-    "获取" : {
+    "获取当前版本" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Get"
+            "value" : "Get Current Version"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "入手"
+            "value" : "現行バージョンを入手"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "받기"
+            "value" : "현재 버전 받기"
           }
         },
         "th" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "รับ"
+            "value" : "รับเวอร์ชันปัจจุบัน"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "取得"
+            "value" : "取得目前版本"
           }
         }
       }
