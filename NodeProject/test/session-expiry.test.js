@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
+import {fileURLToPath} from 'node:url';
 import plist from 'plist';
 import {appInfoFailureCode, isAuthFailureResponse, purchaseSuccessKind} from '../src/client.js';
 import {
@@ -113,6 +116,103 @@ test('rejects an empty Apple action signature', () => {
         () => buildSignedAuthenticationHeaders({}, Buffer.from('plist'), () => Buffer.alloc(0)),
         /SAP 签名为空/
     );
+});
+
+function mockNativeSigner(t, run) {
+    const previousSigner = process.env.IPA_SAP_SIGNER;
+    const signerPath = fileURLToPath(import.meta.url);
+    process.env.IPA_SAP_SIGNER = signerPath;
+    const clock = {now: 1_000};
+    t.mock.method(Date, 'now', () => clock.now);
+    const wait = t.mock.method(Atomics, 'wait', (_state, _index, _value, delay) => {
+        clock.now += delay;
+        return 'timed-out';
+    });
+    const exec = t.mock.method(childProcess, 'execFileSync', (file, args, options) => {
+        assert.equal(file, signerPath);
+        assert.deepEqual(args, []);
+        return run(options, clock);
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+        exec.mock.restore();
+        syncBuiltinESMExports();
+        if (previousSigner === undefined) delete process.env.IPA_SAP_SIGNER;
+        else process.env.IPA_SAP_SIGNER = previousSigner;
+    });
+    return {exec, wait};
+}
+
+test('restarts native SAP initialization twice while preserving signed body bytes', t => {
+    const body = Buffer.from('<?xml version="1.0"?>\n<plist><string>测试 &amp; data</string></plist>');
+    let attempts = 0;
+    const {exec, wait} = mockNativeSigner(t, options => {
+        assert.deepEqual(options.input, body);
+        if (++attempts < 3) {
+            throw Object.assign(new Error('process failed'), {
+                status: 4,
+                stderr: Buffer.from('Apple SAP signing session did not open'),
+            });
+        }
+        return '++8=\n';
+    });
+    const headers = buildSignedAuthenticationHeaders({'Content-Type': 'application/x-apple-plist'}, body);
+
+    assert.equal(headers['X-Apple-ActionSignature'], '++8=');
+    assert.equal(headers['Content-Type'], 'application/x-apple-plist');
+    assert.equal(exec.mock.callCount(), 3);
+    assert.deepEqual(exec.mock.calls.map(call => call.arguments[2].timeout), [35_000, 34_500, 33_500]);
+    assert.deepEqual(wait.mock.calls.map(call => call.arguments[3]), [500, 1_000]);
+});
+
+test('stops after three native SAP initialization failures and preserves the final stderr', t => {
+    let attempts = 0;
+    const {exec, wait} = mockNativeSigner(t, () => {
+        throw Object.assign(new Error('process failed'), {
+            status: 4,
+            stderr: Buffer.from(`CommerceKit initialization failed ${++attempts}: NSURLErrorDomain -1009\n`),
+        });
+    });
+
+    assert.throws(() => buildSignedAuthenticationHeaders({}, Buffer.from('plist')), {
+        message: 'Apple SAP 签名失败：CommerceKit initialization failed 3: NSURLErrorDomain -1009',
+    });
+    assert.equal(exec.mock.callCount(), 3);
+    assert.equal(wait.mock.callCount(), 2);
+});
+
+for (const [label, result, message] of [
+    ['framework failure', Object.assign(new Error('process failed'), {status: 3, stderr: 'CommerceKit missing'}), 'CommerceKit missing'],
+    ['signing failure', Object.assign(new Error('process failed'), {status: 5, stderr: 'SAP signing rejected'}), 'SAP signing rejected'],
+    ['invalid output', 'not a signature', '签名组件返回了无效数据'],
+    ['empty output', '\n', '签名组件返回了无效数据'],
+]) {
+    test(`does not retry native SAP ${label}`, t => {
+        const {exec, wait} = mockNativeSigner(t, () => {
+            if (result instanceof Error) throw result;
+            return result;
+        });
+
+        assert.throws(() => buildSignedAuthenticationHeaders({}, Buffer.from('plist')), {
+            message: `Apple SAP 签名失败：${message}`,
+        });
+        assert.equal(exec.mock.callCount(), 1);
+        assert.equal(wait.mock.callCount(), 0);
+    });
+}
+
+test('does not restart native SAP initialization after the total 35-second budget expires', t => {
+    const {exec, wait} = mockNativeSigner(t, (options, clock) => {
+        clock.now += options.timeout;
+        throw Object.assign(new Error('process failed'), {status: 4, stderr: 'Apple SAP setup timed out'});
+    });
+
+    assert.throws(() => buildSignedAuthenticationHeaders({}, Buffer.from('plist')), {
+        message: 'Apple SAP 签名失败：Apple SAP setup timed out',
+    });
+    assert.equal(exec.mock.callCount(), 1);
+    assert.equal(exec.mock.calls[0].arguments[2].timeout, 35_000);
+    assert.equal(wait.mock.callCount(), 0);
 });
 
 test('builds the signed Store login plist with attempt 1 and an appended auth code', () => {

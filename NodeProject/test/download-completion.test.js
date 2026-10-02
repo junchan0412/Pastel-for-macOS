@@ -36,5 +36,5 @@ test('downloads check the existing license before entering the acquisition fallb
     assert.match(downloadInfo, /if \(!noLicense\) throw error/);
     assert.match(downloadInfo, /@@IPA:requires-acquisition/);
     assert.match(downloadInfo, /IPA_ALLOW_APP_ACQUIRE/);
-    assert.match(downloadInfo, /Store\.purchase\(APPID, '', this\.auth\)/);
+    assert.match(downloadInfo, /Store\.purchase\(APPID, appVerId, this\.auth\)/);
 });

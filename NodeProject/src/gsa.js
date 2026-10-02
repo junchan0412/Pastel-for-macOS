@@ -113,23 +113,31 @@ function signAppleAction(bodyBytes) {
     if (!existsSync(signer)) {
         throw new Error(`缺少 Apple SAP 签名组件：${signer}`);
     }
-    try {
-        const output = execFileSync(signer, [], {
-            input: bodyBytes,
-            encoding: 'utf8',
-            maxBuffer: 1024 * 1024,
-            timeout: 35_000,
-        }).trim();
-        if (!/^[A-Za-z0-9+/]+=*$/.test(output)) {
-            throw new Error('签名组件返回了无效数据');
+    const deadline = Date.now() + 35_000;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+            const output = execFileSync(signer, [], {
+                input: bodyBytes,
+                encoding: 'utf8',
+                maxBuffer: 1024 * 1024,
+                timeout: Math.max(1, deadline - Date.now()),
+            }).trim();
+            if (!/^[A-Za-z0-9+/]+=*$/.test(output)) {
+                throw new Error('签名组件返回了无效数据');
+            }
+            return Buffer.from(output, 'base64');
+        } catch (error) {
+            const delayMs = attempt * 500;
+            if (error?.status === 4 && attempt < 3 && Date.now() + delayMs < deadline) {
+                sleepSync(delayMs);
+                continue;
+            }
+            const stderr = Buffer.isBuffer(error?.stderr)
+                ? error.stderr.toString('utf8').trim()
+                : String(error?.stderr || '').trim();
+            const detail = stderr || error.message || String(error);
+            throw new Error(`Apple SAP 签名失败：${detail}`);
         }
-        return Buffer.from(output, 'base64');
-    } catch (error) {
-        const stderr = Buffer.isBuffer(error?.stderr)
-            ? error.stderr.toString('utf8').trim()
-            : String(error?.stderr || '').trim();
-        const detail = stderr || error.message || String(error);
-        throw new Error(`Apple SAP 签名失败：${detail}`);
     }
 }
 
